@@ -142,6 +142,12 @@ func (s *TableSource) Read(ctx context.Context, opts common.DataRequestOptions) 
 	}
 
 	info := system.Info{AgentVersion: beszel.Version, Cpu: stats.Cpu, MemPct: stats.MemPct}
+	// why: the hub reads DashboardTemp for the Temperature alert and the Temp
+	// column. The stock agent sets it to the highest sensor when it has no
+	// PRIMARY_SENSOR. With no temperature the field stays 0.
+	for _, v := range stats.Temperatures {
+		info.DashboardTemp = max(info.DashboardTemp, v)
+	}
 	// why: read the uptime only after a rule gave data. A Target that is off
 	// then does not use the deadline of the read for it.
 	// why: the uptime must never fail the read. It has its own short limit,

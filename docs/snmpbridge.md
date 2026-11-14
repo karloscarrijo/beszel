@@ -222,6 +222,7 @@ The following list gives the hub fields that a Target fills. The agent of Beszel
 - Memory in bytes (total, used, and buffer plus cached), from `memory`. The `memory` source gives the UCD values in kB, and the bridge multiplies them by 1024. The Memory chart of the hub reads these bytes.
 - Uptime in seconds, from `sysUpTime`.
 - Fans and temperatures, from the table rules.
+- Dashboard temperature, from the table rules. It is the highest temperature of the read, after `match`, `exclude` and `scale`. The "Temp" column of the system list shows it. The Temperature alert of the hub uses the highest sensor of the Target. A read with no temperature above 0 gives 0, as the agent of Beszel does. The hub then shows no value and sends no alert.
 
 The uptime is the uptime of the SNMP service of the Target, not of the device. It has no config key.
 

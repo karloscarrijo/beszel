@@ -74,6 +74,9 @@ func TestRecordedFilesGiveFansAndTemperatures(t *testing.T) {
 	nas, _ := newSource(t, mustRead(t, "testdata/nas-bmc.snmprec"), nasTemp, nasFan)
 	fans, temps := read(t, nas)
 	assert.Equal(t, map[string]uint16{"FAN2": 800, "FAN5": 800, "FAN6": 800}, fans)
+	nasData, err := nas.Read(context.Background(), common.DataRequestOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 71.0, nasData.Info.DashboardTemp)
 	assert.Equal(t, map[string]float64{
 		"CPU1 Temp": 42, "PCH Temp": 59, "System Temp": 42, "Peripheral Temp": 44,
 		"Vcpu1VRM Temp": 71, "VmemABVRM Temp": 43, "VmemCDVRM Temp": 47,
@@ -87,9 +90,28 @@ func TestRecordedFilesGiveFansAndTemperatures(t *testing.T) {
 	data, err := cgw.Read(context.Background(), common.DataRequestOptions{IncludeDetails: true})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]float64{"temp-CPU": 60.562, "temp-Local": 57.437, "temp-PMIC": 64.25, "temp-cpu": 65.3}, data.Stats.Temperatures)
+	assert.Equal(t, 65.3, data.Info.DashboardTemp)
 	assert.Equal(t, map[string]uint16{"fan-CPU": 2031}, data.Stats.Fans)
 	assert.Equal(t, "Switch 1", data.Details.Hostname)
 	assert.NotZero(t, data.Stats.Cpu)
+}
+
+// Guard: a read with no temperature leaves DashboardTemp at 0 and does not
+// fail, so the hub shows no value and sends no alert.
+func TestNoTemperatureLeavesDashboardTempZero(t *testing.T) {
+	fan := rule(KindFan)
+	s, _ := newSource(t, tableText(num("1", "FAN1", 900)), fan)
+	data, err := s.Read(context.Background(), common.DataRequestOptions{})
+	require.NoError(t, err)
+	assert.Zero(t, data.Info.DashboardTemp)
+
+	// A temperature rule with no data point also gives 0.
+	temp := rule(KindTemperature)
+	temp.Match = regexp.MustCompile(`^NONE`)
+	s, _ = newSource(t, tableText(num("1", "FAN1", 900), num("2", "CPU", 40)), fan, temp)
+	data, err = s.Read(context.Background(), common.DataRequestOptions{})
+	require.NoError(t, err)
+	assert.Zero(t, data.Info.DashboardTemp)
 }
 
 func TestMovedIndexKeepsNameAndGoneSensorGivesWarning(t *testing.T) {

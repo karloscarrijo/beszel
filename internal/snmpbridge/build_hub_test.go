@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/henrygd/beszel/internal/entities/system"
+	beszelTests "github.com/henrygd/beszel/internal/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,4 +49,43 @@ func TestHubTargetGetsCPUMemoryFansAndTemperatures(t *testing.T) {
 	assert.Equal(t, 16.0, info.Cpu)
 	assert.Equal(t, 52.8, info.MemPct)
 	assert.Equal(t, uint64(1234), info.Uptime)
+	// Guard: the "Temp" column and the Temperature alert read this field.
+	assert.Equal(t, 65.3, info.DashboardTemp)
+}
+
+// Guard: a Temperature alert on the system of a Target must trigger when the
+// highest sensor is above the limit. The hub skips the alert when
+// Info.DashboardTemp is below 1.
+func TestHubTemperatureAlertTriggersForATarget(t *testing.T) {
+	h := newTestHub(t)
+	cfg := &Config{
+		Profiles: map[string]Profile{"cgw": cgwProfile()},
+		Targets:  []TargetConfig{{Target: alpha, Profile: "cgw"}},
+	}
+	reader := fake(t, mustRead(t, "testdata/cgw-fiber.snmprec")+uptimeRow)
+	newBridge := func() *testBridge {
+		b := NewBridge(cfg, &Settings{HubURL: h.url(), Token: permToken, Keys: h.keys}, func(TargetConfig) Reader { return reader }, slog.New(&logCapture{}))
+		b.Backoff = Backoff{Initial: 20e6, Max: 80e6}
+		return &testBridge{Bridge: b}
+	}
+	stop := newBridge().start(t)
+	eventually(t, "Alpha up with stats", func() bool {
+		return h.status("Alpha") == "up" && h.count("system_stats") >= 1
+	})
+	stop()
+
+	systems, err := h.hub.FindAllRecords("systems")
+	require.NoError(t, err)
+	require.Len(t, systems, 1)
+	// The highest temperature is 65.3, so a limit of 60 must trigger.
+	alert, err := beszelTests.CreateRecord(h.hub, "alerts", map[string]any{
+		"name": "Temperature", "system": systems[0].Id, "user": h.user.Id, "min": 1, "value": 60,
+	})
+	require.NoError(t, err)
+
+	newBridge().start(t)
+	eventually(t, "Temperature alert triggered", func() bool {
+		rec, err := h.hub.FindRecordById("alerts", alert.Id)
+		return err == nil && rec.GetBool("triggered")
+	})
 }
