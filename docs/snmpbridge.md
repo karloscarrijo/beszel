@@ -380,6 +380,31 @@ A docker host can use the git URL and the tag as the build context.
 
 Run `scripts/check-snmpbridge-image.sh` to check the image. The script builds the image and runs it with no `SNMPBRIDGE_CONFIG`. It passes when the bridge stops with a non-zero exit code and names `SNMPBRIDGE_CONFIG`.
 
+### Hub image
+
+The file `internal/dockerfile_hub_ui` builds the hub of the fork. The upstream file `internal/dockerfile_hub` builds only the Go code, and it needs a `dist` folder that git does not hold.
+
+The new file builds the UI first with bun. Then it embeds the UI in the hub.
+
+Build it from the root of the repo:
+
+```sh
+docker build -f internal/dockerfile_hub_ui -t beszel-hub .
+```
+
+The hub and the bridge build from one tag of the fork. A docker host uses the same git URL and tag as the build context for both files:
+
+| Image | File |
+|---|---|
+| Hub with the UI | `internal/dockerfile_hub_ui` |
+| SNMP bridge | `internal/dockerfile_snmpbridge` |
+
+Run `scripts/check-hub-image.sh` to check the hub image. The script copies the files of the commit `HEAD` to a new folder, so the folder has no `dist` and no `node_modules`. It builds the image from that folder and starts a container.
+
+Set `TREE=working` to check the working tree before a commit.
+
+The script passes when `GET /` gives the HTML of the app, and one asset that the HTML names gives 200. It exits with a code that is not 0 when a step fails.
+
 ## Status of this version
 
 This version loads and checks the config. The running bridge reads each Target with the SNMP reader, the rules of its Profile and the read timing. It reports the data of the Target, with CPU, memory and uptime.

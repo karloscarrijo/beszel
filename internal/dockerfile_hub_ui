@@ -1,0 +1,57 @@
+# Hub image that builds the UI first.
+# Use it for a build from a git tag, where `internal/site/dist` does not exist.
+# Build from the root of the repo: docker build -f internal/dockerfile_hub_ui -t beszel-hub .
+
+# --------------------------
+# Stage 1: build the UI
+# --------------------------
+FROM --platform=$BUILDPLATFORM oven/bun:alpine AS ui
+
+WORKDIR /app/internal/site
+
+COPY internal/site/package.json internal/site/bun.lock ./
+RUN bun install --no-save --frozen-lockfile
+
+COPY internal/site ./
+RUN bun run build
+
+# --------------------------
+# Stage 2: build the hub with the UI embedded
+# --------------------------
+FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source files
+COPY . ./
+# Remove a local dist from the context, so the embed holds only the new UI build
+RUN rm -rf ./internal/site/dist
+COPY --from=ui /app/internal/site/dist ./internal/site/dist
+
+RUN apk add --no-cache ca-certificates && update-ca-certificates
+
+# Build
+ARG TARGETOS TARGETARCH TARGETVARIANT
+RUN if [ "$TARGETARCH" = "arm" ] && [ -n "$TARGETVARIANT" ]; then \
+    export GOARM="${TARGETVARIANT#v}"; \
+  fi; \
+  CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-w -s" -o /beszel ./internal/cmd/hub
+
+# --------------------------
+# Final image: scratch-based hub
+# --------------------------
+FROM scratch
+
+COPY --from=builder /beszel /
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Ensure data persistence across container recreations
+VOLUME ["/beszel_data"]
+
+EXPOSE 8090
+
+ENTRYPOINT [ "/beszel" ]
+CMD ["serve", "--http=0.0.0.0:8090"]
