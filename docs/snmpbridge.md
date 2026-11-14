@@ -14,7 +14,7 @@ The following list gives the main facts of this document.
 
 This document explains how the Simple Network Management Protocol (SNMP) bridge connects to a Beszel hub. It is an explanation for the person who runs the bridge.
 
-This version covers the token, the identity of a Target, the config file, the table rules of a Profile, the read timing, the down status and the image.
+This version covers the token, the identity of a Target, the config file and the table rules of a Profile. It also covers the read timing, the down status and the image.
 
 ## Token and identity
 
