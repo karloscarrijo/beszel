@@ -14,7 +14,7 @@ The following list gives the main facts of this document.
 
 This document explains how the Simple Network Management Protocol (SNMP) bridge connects to a Beszel hub. It is an explanation for the person who runs the bridge.
 
-This version covers the token, the identity of a Target and the config file. It does not cover the table reads or the read timing. It does not cover how the bridge sets a Target down.
+This version covers the token, the identity of a Target, the config file and the table rules of a Profile. It does not cover the read timing. It does not cover how the bridge sets a Target that does not answer down.
 
 ## Token and identity
 
@@ -165,4 +165,104 @@ The Target `id` sets the fingerprint, so a changed `id` of a Target gives a new 
 
 ### Status of this version
 
-This version loads and checks the config and has the SNMP reader. It does not read the tables. Each Target reports the fixed data of a stub.
+This version loads and checks the config. It has the SNMP reader and reads the table rules of a Profile. The reader is not yet in the running bridge, so the running bridge still reports the fixed data of a stub.
+
+## Profiles
+
+A Profile names the tables that the bridge reads from a Target. The bridge puts the fans in `Stats.Fans` and the temperatures in `Stats.Temperatures`. The hub then draws the charts with no UI change.
+
+A sensor with no data point has no key in these maps.
+
+### Steps of a table rule
+
+The bridge does these steps for each table rule, in this order:
+
+1. Walk the table below `oid`.
+2. Join the name column and the value column by the row index. The row index is the part of the OID after the column number.
+3. Keep a row when its name matches `match` and does not match `exclude`. Both are searches in the name, not matches of the full name. The bridge drops a row with an empty name.
+4. Add a suffix to a repeated name. The second row of the name `FAN1` becomes `FAN1 #2`, and the bridge logs one warning for the name.
+5. Read the value. It is an integer, or a string with a decimal number such as `"700.000"`. The decimal point is a dot.
+6. Divide the value by `scale`.
+7. Check the range. A fan value must be an integer from 0 to 65535. A temperature must be a finite number.
+
+A value that fails a step gives no data point. It never wraps to a different number. It does not stop the bridge.
+
+The bridge keeps the name with its row. So a sensor keeps its name and value when the device gives it a new index.
+
+### Logs and failed reads
+
+The following list gives the log lines of the table rules. The bridge writes each line for a change, not for each read.
+
+- **Sensor gone:** a name that gave data since the start and is not in the data now gives one warning. When the name comes back, the bridge logs one line.
+- **Rule with no data:** a rule with no data point gives one warning that names the Target and the rule. The rule number is its position in the Profile, from 1. The bridge logs again only when the state changes.
+- **Repeated name:** one warning for each repeated name. The suffix applies over all rules of one kind (fan or temperature) of the Target.
+- **Failed table read:** a rule whose walk fails gives one warning for each run of failures. The other rules still give data.
+
+A rule with no data does not stop the other rules. When no rule of the Profile gives data (the table rules, `cpu` and `memory` together), the read fails. The bridge then replies to the hub with an error, and the hub shows the system as down.
+
+The known limit of the suffix: after a firmware update, `FAN1` and `FAN1 #2` can change places. Their chart history then mixes.
+
+### Example for the NAS BMC
+
+The baseboard management controller (BMC) of the network-attached storage (NAS) has one vendor table. Column 13 holds the name. Column 2 holds the value as a string.
+
+Some rows are not real sensors. `FAN1` always reads 0, and some temperature rows read 0 for a part that is not there. The `exclude` expressions remove them.
+
+The community and the host are example values.
+
+```yaml
+profiles:
+  nas-bmc:
+    tables:
+      - oid: .1.3.6.1.4.1.21317.1.3.1
+        name_column: 13
+        value_column: 2
+        kind: temperature
+        match: 'Temp$'
+        exclude: '^(CPU2|Vcpu2VRM|VmemEFVRM|VmemGHVRM|P[12]-DIMM[C-H])'
+      - oid: .1.3.6.1.4.1.21317.1.3.1
+        name_column: 13
+        value_column: 2
+        kind: fan
+        match: '^FAN'
+        exclude: '^FAN(1|3|4|A|B)$'
+targets:
+  - id: nas-bmc
+    name: NAS BMC
+    host: 192.0.2.20
+    profile: nas-bmc
+    community_file: /run/secrets/nas-bmc-community
+```
+
+### Example for the CGW-Fiber
+
+The CGW-Fiber gives its sensors in the LM-SENSORS-MIB tables. The value is in milli-degrees, so `scale` is 1000. The Profile also uses the built-in `ucd` sources.
+
+The rows `temp3` and `fan2` always read 0, so `exclude` removes them.
+
+```yaml
+profiles:
+  cgw-fiber:
+    cpu: ucd
+    memory: ucd
+    tables:
+      - oid: .1.3.6.1.4.1.2021.13.16.2.1
+        name_column: 2
+        value_column: 3
+        kind: temperature
+        scale: 1000
+        exclude: '^temp3$'
+      - oid: .1.3.6.1.4.1.2021.13.16.3.1
+        name_column: 2
+        value_column: 3
+        kind: fan
+        exclude: '^fan2$'
+targets:
+  - id: cgw-fiber
+    name: CGW-Fiber
+    host: 192.0.2.10
+    profile: cgw-fiber
+    community_file: /run/secrets/cgw-fiber-community
+```
+
+A test reads the same rules against the recorded files of the 2 Targets and checks the fans and the temperatures. No test parses the YAML text of these examples.
