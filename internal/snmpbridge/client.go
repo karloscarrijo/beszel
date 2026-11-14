@@ -27,6 +27,9 @@ import (
 // keeps a live connection open.
 const wsDeadline = 120 * time.Second
 
+// closeWait is the longest wait for the hub to answer a close frame.
+const closeWait = 3 * time.Second
+
 // Source gives the data of one Target.
 type Source interface {
 	// Data returns the reply to a GetData request. An error gives an error
@@ -46,6 +49,33 @@ type Client struct {
 	// CheckFingerprint.
 	Fail   func(action common.WebSocketAction) string
 	Logger *slog.Logger
+
+	// once logs each kind of event one time, until the state of the Target
+	// changes. It lives as long as the Client, so it spans the calls of Run.
+	once *onceLog
+	// sess is the session of the last Run call. It holds the served flag.
+	sess atomic.Pointer[session]
+}
+
+// ErrBadKey is the cause that Run returns when the hub signature does not
+// match any key of the Client.
+var ErrBadKey = errors.New("invalid signature - check KEY value")
+
+// Served reports whether the last call of Run replied to a GetData request.
+// A connection that served data is a good connection.
+func (c *Client) Served() bool {
+	s := c.sess.Load()
+	return s != nil && s.served.Load()
+}
+
+// CloseReason returns the reason text of a WebSocket close that the hub sent,
+// or an empty string when err is not a close error.
+func CloseReason(err error) string {
+	var ce *gws.CloseError
+	if errors.As(err, &ce) {
+		return string(ce.Reason)
+	}
+	return ""
 }
 
 // HandshakeError is the reply of the hub when it refuses the WebSocket
@@ -62,6 +92,13 @@ func (e *HandshakeError) Error() string {
 
 func (e *HandshakeError) Unwrap() error { return e.Err }
 
+// DialError means that the client could not reach the hub, for example with a
+// wrong HUB_URL or a hub that is off.
+type DialError struct{ Err error }
+
+func (e *DialError) Error() string { return "cannot reach the hub: " + e.Err.Error() }
+func (e *DialError) Unwrap() error { return e.Err }
+
 // Run connects to the hub and serves requests until the connection closes or
 // ctx ends. It returns the cause of the close. Run does not connect again:
 // the caller decides when to call Run again.
@@ -69,11 +106,15 @@ func (c *Client) Run(ctx context.Context) error {
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
+	if c.once == nil {
+		c.once = &onceLog{log: c.Logger.With("target", c.Target.ID)}
+	}
 	addr, err := agentConnectURL(c.HubURL)
 	if err != nil {
 		return err
 	}
 	sess := &session{client: c, log: c.Logger.With("target", c.Target.ID), done: make(chan struct{})}
+	c.sess.Store(sess)
 	conn, resp, err := gws.NewClient(sess, &gws.ClientOption{
 		Addr: addr,
 		RequestHeader: http.Header{
@@ -92,16 +133,26 @@ func (c *Client) Run(ctx context.Context) error {
 			}
 			return &HandshakeError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body)), Err: err}
 		}
-		return err
+		return &DialError{Err: err}
 	}
 	go conn.ReadLoop()
 
 	select {
 	case <-ctx.Done():
 		_ = conn.WriteClose(1000, nil)
-		<-sess.done
+		// why: a hub that does not answer the close frame must not block
+		// the shutdown of the bridge.
+		select {
+		case <-sess.done:
+		case <-time.After(closeWait):
+			// The hub did not answer the close frame. Close the socket.
+			_ = conn.NetConn().Close()
+		}
 		return ctx.Err()
 	case <-sess.done:
+		if sess.badKey.Load() {
+			return ErrBadKey
+		}
 		return sess.closeErr
 	}
 }
@@ -125,9 +176,16 @@ func agentConnectURL(hubURL string) (string, error) {
 // session holds the state of one connection.
 type session struct {
 	gws.BuiltinEventHandler
-	client    *Client
-	log       *slog.Logger
-	verified  atomic.Bool
+	client   *Client
+	log      *slog.Logger
+	verified atomic.Bool
+	badKey   atomic.Bool
+	// served is set before the reply to GetData is sent, so Run cannot
+	// return before it is set. It belongs to this session only.
+	served atomic.Bool
+	// dataMu makes calls of Source.Data one at a time. A reader of a Target
+	// does not need to be safe for parallel calls.
+	dataMu    sync.Mutex
 	writeMu   sync.Mutex
 	done      chan struct{}
 	closeOnce sync.Once
@@ -136,13 +194,13 @@ type session struct {
 
 func (s *session) OnOpen(conn *gws.Conn) {
 	_ = conn.SetDeadline(time.Now().Add(wsDeadline))
-	s.log.Info("connected")
+	s.client.once.write(slog.LevelInfo, "connected", "connected to the hub", "name", s.client.Target.Name)
 }
 
 func (s *session) OnClose(conn *gws.Conn, err error) {
 	s.closeOnce.Do(func() {
 		s.closeErr = err
-		s.log.Warn("connection closed", "err", err)
+		s.log.Debug("connection closed", "err", err)
 		close(s.done)
 	})
 }
@@ -167,7 +225,7 @@ func (s *session) OnMessage(conn *gws.Conn, message *gws.Message) {
 	if req.Id != nil {
 		id = fmt.Sprint(*req.Id)
 	}
-	s.log.Info("request", "action", req.Action, "name", actionName(req.Action), "id", id)
+	s.log.Debug("request", "action", req.Action, "name", actionName(req.Action), "id", id)
 
 	if req.Id == nil {
 		// Each hub since 0.18 sends an id. A request with no id comes from
@@ -175,14 +233,29 @@ func (s *session) OnMessage(conn *gws.Conn, message *gws.Message) {
 		s.log.Warn("request has no id, no reply", "action", req.Action)
 		return
 	}
-	resp := s.handle(&req)
-	resp.Id = req.Id
-	if err := s.write(conn, resp); err != nil {
-		// why: like the stock agent (#1263), close a connection that cannot
-		// send, so the caller connects again before the read deadline.
-		s.log.Error("cannot send reply, close the connection", "action", req.Action, "err", err)
-		_ = conn.WriteClose(1000, nil)
-	}
+	// why: a slow Source.Data call must not block the pings and the other
+	// requests on the read goroutine of the connection.
+	go func() {
+		resp := s.handle(&req)
+		resp.Id = req.Id
+		if req.Action == common.GetData && resp.Error == "" {
+			// why: the hub can close the connection as soon as it reads
+			// the reply, and Run then returns. Set the flag first.
+			s.served.Store(true)
+		}
+		if err := s.write(conn, resp); err != nil {
+			// why: like the stock agent (#1263), close a connection that cannot
+			// send, so the caller connects again before the read deadline.
+			s.client.once.write(slog.LevelError, "write", "cannot send reply, close the connection", "action", req.Action, "err", err)
+			_ = conn.WriteClose(1000, nil)
+			return
+		}
+		if s.badKey.Load() {
+			// why: the hub may keep the connection open after a bad
+			// signature. Close it so the caller can connect again.
+			_ = conn.WriteClose(1000, nil)
+		}
+	}()
 }
 
 func (s *session) handle(req *common.HubRequest[cbor.RawMessage]) common.AgentResponse {
@@ -208,7 +281,9 @@ func (s *session) handle(req *common.HubRequest[cbor.RawMessage]) common.AgentRe
 				s.log.Warn("cannot parse GetData options, use defaults", "err", err)
 			}
 		}
+		s.dataMu.Lock()
 		data, err := c.Source.Data(opts)
+		s.dataMu.Unlock()
 		if err != nil {
 			return common.AgentResponse{Error: err.Error()}
 		}
@@ -229,7 +304,9 @@ func (s *session) handleFingerprint(data cbor.RawMessage) common.AgentResponse {
 		return common.AgentResponse{Error: err.Error()}
 	}
 	if err := verifySignature(s.client.Keys, s.client.Token, req.Signature); err != nil {
-		s.log.Error("hub signature is not valid", "err", err)
+		// Set the flag before the reply: the hub can close the connection
+		// as soon as it reads the reply.
+		s.badKey.Store(true)
 		return common.AgentResponse{Error: err.Error()}
 	}
 	s.verified.Store(true)
@@ -248,7 +325,7 @@ func verifySignature(keys []ssh.PublicKey, token string, blob []byte) error {
 			return nil
 		}
 	}
-	return errors.New("invalid signature - check KEY value")
+	return ErrBadKey
 }
 
 func (s *session) write(conn *gws.Conn, resp common.AgentResponse) error {
