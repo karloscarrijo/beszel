@@ -61,6 +61,7 @@ func (am *AlertManager) HandleSystemAlerts(systemRecord *core.Record, data *syst
 		name := alertData.Name
 		var val float64
 		unit := "%"
+		var descriptor string
 
 		switch name {
 		case "CPU":
@@ -113,12 +114,14 @@ func (am *AlertManager) HandleSystemAlerts(systemRecord *core.Record, data *syst
 			}
 			val = float64(data.Stats.Battery[0])
 		case "FanLow":
-			lowest, ok := lowestFanSpeed(data.Stats.Fans)
+			fan, lowest, ok := lowestFanSpeed(data.Stats.Fans)
 			if !ok {
 				continue
 			}
 			val = lowest
 			unit = " RPM"
+			// the fan name comes from the current data, also for an average over more than 1 minute
+			descriptor = "Slowest fan " + fan
 		default:
 			var ok bool
 			if val, ok = cpuStateAlertValue(name, data.Stats.CpuBreakdown); !ok {
@@ -129,12 +132,12 @@ func (am *AlertManager) HandleSystemAlerts(systemRecord *core.Record, data *syst
 		triggered := alertData.Triggered
 		threshold := alertData.Value
 
-		// Battery alert has inverted logic: trigger when value is BELOW threshold
+		// Battery and FanLow alerts have inverted logic: trigger when value is BELOW threshold
 		lowAlert := isLowAlert(name)
 
 		// CONTINUE
 		// For normal alerts: IF not triggered and curValue <= threshold, OR triggered and curValue > threshold
-		// For low alerts (Battery): IF not triggered and curValue >= threshold, OR triggered and curValue < threshold
+		// For low alerts (Battery, FanLow): IF not triggered and curValue >= threshold, OR triggered and curValue < threshold
 		if lowAlert {
 			if (!triggered && val >= threshold) || (triggered && val < threshold) {
 				continue
@@ -151,6 +154,7 @@ func (am *AlertManager) HandleSystemAlerts(systemRecord *core.Record, data *syst
 			systemRecord: systemRecord,
 			alertData:    alertData,
 			name:         name,
+			descriptor:   descriptor,
 			unit:         unit,
 			val:          val,
 			threshold:    threshold,
@@ -308,7 +312,7 @@ func (am *AlertManager) HandleSystemAlerts(systemRecord *core.Record, data *syst
 				}
 				alert.val += float64(stats.Battery[0])
 			case "FanLow":
-				lowest, ok := lowestFanSpeed(stats.Fans)
+				_, lowest, ok := lowestFanSpeed(stats.Fans)
 				if !ok {
 					continue
 				}
@@ -362,7 +366,7 @@ func (am *AlertManager) HandleSystemAlerts(systemRecord *core.Record, data *syst
 		// log.Printf("%s: val %f | count %d | min-count %f | threshold %f\n", alert.name, alert.val, alert.count, minCount, alert.threshold)
 		// pass through alert if count is greater than or equal to minCount
 		if float32(alert.count) >= minCount {
-			// Battery alert has inverted logic: trigger when value is BELOW threshold
+			// Battery and FanLow alerts have inverted logic: trigger when value is BELOW threshold
 			lowAlert := isLowAlert(alert.name)
 			if lowAlert {
 				if !alert.triggered && alert.val < alert.threshold {
@@ -409,7 +413,6 @@ func (am *AlertManager) sendSystemAlert(alert SystemAlertData) {
 
 	if alert.name == "FanLow" {
 		alert.name = "Fan speed"
-		alert.descriptor = "Slowest fan"
 	}
 	if state, ok := cpuStateAlerts[alert.name]; ok {
 		alert.name = state.label
@@ -470,14 +473,18 @@ func isLowAlert(name string) bool {
 	return name == "Battery" || name == "FanLow"
 }
 
-// lowestFanSpeed returns the speed of the slowest fan. A stopped fan (0 RPM) counts.
-func lowestFanSpeed(fans map[string]uint16) (float64, bool) {
+// lowestFanSpeed returns the name and the speed of the slowest fan. A stopped fan (0 RPM) counts.
+// With equal speeds, the first name in sort order wins.
+func lowestFanSpeed(fans map[string]uint16) (string, float64, bool) {
 	if len(fans) == 0 {
-		return 0, false
+		return "", 0, false
 	}
 	lowest := uint16(math.MaxUint16)
-	for _, rpm := range fans {
-		lowest = min(lowest, rpm)
+	var lowestName string
+	for name, rpm := range fans {
+		if rpm < lowest || (rpm == lowest && (lowestName == "" || name < lowestName)) {
+			lowest, lowestName = rpm, name
+		}
 	}
-	return float64(lowest), true
+	return lowestName, float64(lowest), true
 }

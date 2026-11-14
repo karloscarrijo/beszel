@@ -112,6 +112,28 @@ func TestFanLowAlertAveragesSlowestFanOfEachRecord(t *testing.T) {
 	assert.True(t, below.update(now, map[string]uint16{"a": 100}), "average of the slowest fans (450) is below the limit")
 }
 
+func TestFanLowAlertMessageNamesSlowestFan(t *testing.T) {
+	now := time.Now().UTC()
+
+	// 1 minute: the name and the value come from the current data.
+	one := newFanAlertFixture(t, 500, 1)
+	require.True(t, one.update(now, map[string]uint16{"cpu": 1200, "sys": 300, "rear": 300}))
+	messages := one.hub.TestMailer.Messages()
+	require.Len(t, messages, 1)
+	assert.Contains(t, messages[0].Subject, "fan speed below threshold")
+	assert.Contains(t, messages[0].HTML, "Slowest fan rear averaged 300.00 RPM for the previous 1 minute.")
+
+	// More than 1 minute: the value is the average, and the name is the slowest fan of the current data.
+	many := newFanAlertFixture(t, 500, 2)
+	many.addStats(now.Add(-180*time.Second), map[string]uint16{"cpu": 100, "sys": 2000})
+	many.addStats(now.Add(-90*time.Second), map[string]uint16{"cpu": 100, "sys": 2000})
+	many.addStats(now.Add(-30*time.Second), map[string]uint16{"cpu": 100, "sys": 2000})
+	require.True(t, many.update(now, map[string]uint16{"cpu": 1200, "sys": 200}))
+	messages = many.hub.TestMailer.Messages()
+	require.Len(t, messages, 1)
+	assert.Contains(t, messages[0].HTML, "Slowest fan sys averaged 100.00 RPM for the previous 2 minutes.")
+}
+
 func TestFanLowAlertNoFanData(t *testing.T) {
 	now := time.Now().UTC()
 
