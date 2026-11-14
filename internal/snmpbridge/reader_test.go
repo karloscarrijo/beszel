@@ -164,25 +164,30 @@ func TestMemoryUCD(t *testing.T) {
 		return s
 	}
 	tests := []struct {
-		name string
-		text string
-		want float64
-		ok   bool
+		name  string
+		text  string
+		want  float64
+		ok    bool
+		bytes [3]uint64 // total, used, buffer + cached
 	}{
-		{"formula", mem("1000", "300", "100", "200"), 40, true},
-		{"missing buffer and cached count as 0", mem("1000", "300", "", ""), 70, true},
-		{"zero total", mem("0", "0", "0", "0"), 0, false},
-		{"missing total", mem("", "300", "100", "200"), 0, false},
-		{"missing avail", mem("1000", "", "100", "200"), 0, false},
-		{"used below 0", mem("1000", "800", "200", "200"), 0, false},
-		{"used exactly 0", mem("1000", "800", "100", "100"), 0, true},
+		{"formula", mem("1000", "300", "100", "200"), 40, true, [3]uint64{1024000, 409600, 307200}},
+		{"missing buffer and cached count as 0", mem("1000", "300", "", ""), 70, true, [3]uint64{1024000, 716800, 0}},
+		{"zero total", mem("0", "0", "0", "0"), 0, false, [3]uint64{}},
+		{"missing total", mem("", "300", "100", "200"), 0, false, [3]uint64{}},
+		{"missing avail", mem("1000", "", "100", "200"), 0, false, [3]uint64{}},
+		{"used below 0", mem("1000", "800", "200", "200"), 0, false, [3]uint64{}},
+		{"used exactly 0", mem("1000", "800", "100", "100"), 0, true, [3]uint64{1024000, 0, 204800}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok, err := MemoryUCD(ctx, fake(t, tc.text))
 			require.NoError(t, err)
 			assert.Equal(t, tc.ok, ok)
-			assert.InDelta(t, tc.want, got, 1e-9)
+			assert.InDelta(t, tc.want, got.Percent, 1e-9)
+			if ok {
+				// The UCD values are in kB: the bytes are 1024 times more.
+				assert.Equal(t, tc.bytes, [3]uint64{got.Total, got.Used, got.BuffCache})
+			}
 		})
 	}
 }
@@ -199,5 +204,5 @@ func TestUCDWithRecordedData(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	// (2960768 - 189748 - 209844 - 997908) / 2960768
-	assert.InDelta(t, 52.8, mem, 0.1)
+	assert.InDelta(t, 52.8, mem.Percent, 0.1)
 }

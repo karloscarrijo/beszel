@@ -159,6 +159,22 @@ The memory source gives no data in these cases:
 
 A missing `memBuffer` or `memCached` counts as 0.
 
+### Hub fields of a Target
+
+The following list gives the hub fields that a Target fills. The agent of Beszel fills these fields in the same way. A Target fills no other field, such as disk or network.
+
+- CPU percent, with 2 decimals, from `cpu`.
+- Memory percent, with 2 decimals, from `memory`.
+- Memory in bytes (total, used, and buffer plus cached), from `memory`. The `memory` source gives the UCD values in kB, and the bridge multiplies them by 1024. The Memory chart of the hub reads these bytes.
+- Uptime in seconds, from `sysUpTime`.
+- Fans and temperatures, from the table rules.
+
+The uptime is the uptime of the SNMP service of the Target, not of the device. It has no config key.
+
+A missing `sysUpTime` or a failed read of it gives 0, and the Target stays up. The hub hides an uptime of 0.
+
+A Target with no `cpu` or no `memory` source shows 0 % for that value. This is not an error.
+
 ### Changed id of a Target
 
 The Target `id` sets the fingerprint, so a changed `id` of a Target gives a new system. The old system shows as down. Delete the old system in the hub.
@@ -307,4 +323,4 @@ Run `scripts/check-snmpbridge-image.sh` to check the image. The script builds th
 
 ## Status of this version
 
-This version loads and checks the config. It has the SNMP reader, the table rules of a Profile and the read timing. The reader is not yet in the running bridge, so the running bridge still reports the fixed data of a stub.
+This version loads and checks the config. The running bridge reads each Target with the SNMP reader, the rules of its Profile and the read timing. It reports the data of the Target, with CPU, memory and uptime.

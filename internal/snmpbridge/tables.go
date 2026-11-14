@@ -9,12 +9,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/henrygd/beszel"
 	"github.com/henrygd/beszel/internal/common"
 	"github.com/henrygd/beszel/internal/entities/system"
 )
+
+// uptimeTimeout is the time limit of the sysUpTime read.
+const uptimeTimeout = 3 * time.Second
 
 // ErrNoData is the error of a read where no rule of the Profile gives data.
 var ErrNoData = errors.New("no rule of the profile gives data")
@@ -26,16 +30,13 @@ type TableSource struct {
 	Profile Profile
 	Reader  Reader
 	Logger  *slog.Logger
-	// Context is the context of each read. The read timing is in beszel#008.
-	// A nil Context means context.Background().
-	Context context.Context
 
 	mu    sync.Mutex
 	rules map[int]*ruleState // key: the index of the rule in the Profile
 	dups  map[string]bool    // repeated names that already gave a warning
 }
 
-var _ Source = (*TableSource)(nil)
+var _ ReadFunc = (*TableSource)(nil).Read
 
 // ruleState is what the bridge remembers of one table rule.
 type ruleState struct {
@@ -46,13 +47,10 @@ type ruleState struct {
 	gone    map[string]bool // names that gave a warning and are not back
 }
 
-// Data implements Source. It reads each rule of the Profile. An error means
-// that no rule gave data, so the hub sets the system down.
-func (s *TableSource) Data(opts common.DataRequestOptions) (*system.CombinedData, error) {
-	ctx := s.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
+// Read is a ReadFunc. It reads each rule of the Profile and gives ctx to each
+// SNMP request. An error means that no rule gave data, so the hub sets the
+// system down.
+func (s *TableSource) Read(ctx context.Context, opts common.DataRequestOptions) (*system.CombinedData, error) {
 	log := s.Logger
 	if log == nil {
 		log = slog.Default()
@@ -115,22 +113,25 @@ func (s *TableSource) Data(opts common.DataRequestOptions) (*system.CombinedData
 			}
 		}
 	}
+	// A Profile with no cpu or memory source sends 0 in these fields.
 	if s.Profile.CPU == SourceUCD {
 		pct, ok, err := CPUUCD(ctx, s.Reader)
 		switch {
 		case err != nil:
 			note(err)
 		case ok:
-			stats.Cpu, gave = pct, true
+			stats.Cpu, gave = twoDecimals(pct), true
 		}
 	}
 	if s.Profile.Memory == SourceUCD {
-		pct, ok, err := MemoryUCD(ctx, s.Reader)
+		mem, ok, err := MemoryUCD(ctx, s.Reader)
 		switch {
 		case err != nil:
 			note(err)
 		case ok:
-			stats.MemPct, gave = pct, true
+			stats.MemPct = twoDecimals(mem.Percent)
+			stats.MemBytes = [4]uint64{mem.Total, mem.Used, mem.BuffCache, 0}
+			gave = true
 		}
 	}
 	if !gave {
@@ -140,10 +141,18 @@ func (s *TableSource) Data(opts common.DataRequestOptions) (*system.CombinedData
 		return nil, ErrNoData
 	}
 
-	data := &system.CombinedData{
-		Stats: stats,
-		Info:  system.Info{AgentVersion: beszel.Version},
+	info := system.Info{AgentVersion: beszel.Version, Cpu: stats.Cpu, MemPct: stats.MemPct}
+	// why: read the uptime only after a rule gave data. A Target that is off
+	// then does not use the deadline of the read for it.
+	// why: the uptime must never fail the read. It has its own short limit,
+	// and it is skipped when less time is left, so a silent sysUpTime cannot
+	// push the read past the deadline of the scheduler.
+	if dl, ok := ctx.Deadline(); !ok || time.Until(dl) > uptimeTimeout {
+		uctx, cancel := context.WithTimeout(ctx, uptimeTimeout)
+		info.Uptime = Uptime(uctx, s.Reader)
+		cancel()
 	}
+	data := &system.CombinedData{Stats: stats, Info: info}
 	// why: the hub asks for the details until it gets them. The hostname is
 	// the name, because SYNC_SYSTEM_NAMES=true renames a system to it.
 	if opts.IncludeDetails {
@@ -151,6 +160,9 @@ func (s *TableSource) Data(opts common.DataRequestOptions) (*system.CombinedData
 	}
 	return data, nil
 }
+
+// twoDecimals rounds to 2 decimals, as the stock agent does.
+func twoDecimals(v float64) float64 { return math.Round(v*100) / 100 }
 
 // tableRow is one joined row of a table.
 type tableRow struct {

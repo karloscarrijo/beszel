@@ -56,7 +56,7 @@ func newSource(t *testing.T, text string, rules ...TableRule) (*TableSource, *by
 
 func read(t *testing.T, s *TableSource) (fans map[string]uint16, temps map[string]float64) {
 	t.Helper()
-	data, err := s.Data(common.DataRequestOptions{})
+	data, err := s.Read(context.Background(), common.DataRequestOptions{})
 	require.NoError(t, err)
 	return data.Stats.Fans, data.Stats.Temperatures
 }
@@ -84,7 +84,7 @@ func TestRecordedFilesGiveFansAndTemperatures(t *testing.T) {
 	cgwFan := TableRule{OID: ".1.3.6.1.4.1.2021.13.16.3.1", NameColumn: 2, ValueColumn: 3, Kind: KindFan, Scale: 1, Exclude: regexp.MustCompile(`^fan2$`)}
 	cgw, _ := newSource(t, mustRead(t, "testdata/cgw-fiber.snmprec"), cgwTemp, cgwFan)
 	cgw.Profile.CPU, cgw.Profile.Memory = SourceUCD, SourceUCD
-	data, err := cgw.Data(common.DataRequestOptions{IncludeDetails: true})
+	data, err := cgw.Read(context.Background(), common.DataRequestOptions{IncludeDetails: true})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]float64{"temp-CPU": 60.562, "temp-Local": 57.437, "temp-PMIC": 64.25, "temp-cpu": 65.3}, data.Stats.Temperatures)
 	assert.Equal(t, map[string]uint16{"fan-CPU": 2031}, data.Stats.Fans)
@@ -287,18 +287,18 @@ func TestNoRuleGivesDataFailsTheRead(t *testing.T) {
 	s, buf := newSource(t, tableText(num("1", "CPU", 40)), fan)
 	fan.Match = regexp.MustCompile(`^FAN`)
 	s.Profile.Tables = []TableRule{fan}
-	_, err := s.Data(common.DataRequestOptions{})
+	_, err := s.Read(context.Background(), common.DataRequestOptions{})
 	assert.ErrorIs(t, err, ErrNoData)
 	assert.Equal(t, 1, count(buf, "table rule gives no data"))
 
 	// A cpu source with no data counts with the table rules.
 	s.Profile.CPU = SourceUCD
-	_, err = s.Data(common.DataRequestOptions{})
+	_, err = s.Read(context.Background(), common.DataRequestOptions{})
 	assert.ErrorIs(t, err, ErrNoData)
 
 	// A reader error also fails the read, and it is not a "0 rows" state.
 	s.Reader.(*FakeReader).Err = true
-	_, err = s.Data(common.DataRequestOptions{})
+	_, err = s.Read(context.Background(), common.DataRequestOptions{})
 	var re *ReadError
 	require.ErrorAs(t, err, &re)
 	assert.Equal(t, 1, count(buf, "table rule gives no data"))

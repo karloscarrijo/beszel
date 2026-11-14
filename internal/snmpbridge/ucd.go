@@ -9,6 +9,7 @@ const (
 	oidMemAvailReal = ".1.3.6.1.4.1.2021.4.6.0"
 	oidMemBuffer    = ".1.3.6.1.4.1.2021.4.14.0"
 	oidMemCached    = ".1.3.6.1.4.1.2021.4.15.0"
+	oidSysUpTime    = ".1.3.6.1.2.1.1.3.0"
 )
 
 // CPUUCD gives the CPU use in percent: 100 - ssCpuIdle, limited to 0 to 100.
@@ -25,28 +26,61 @@ func CPUUCD(ctx context.Context, r Reader) (percent float64, ok bool, err error)
 	return min(max(100-float64(idle), 0), 100), true, nil
 }
 
-// MemoryUCD gives the memory use in percent:
-// (memTotalReal - memAvailReal - memBuffer - memCached) / memTotalReal.
+// Memory is the memory use of a Target. The byte values are the UCD values
+// in kB, times 1024.
+type Memory struct {
+	Percent   float64
+	Total     uint64
+	Used      uint64
+	BuffCache uint64 // memBuffer + memCached
+}
+
+// MemoryUCD gives the memory use:
+// (memTotalReal - memAvailReal - memBuffer - memCached) / memTotalReal, in
+// percent, and the total, the used value and buffer + cached in bytes.
 // ok is false when memTotalReal is 0 or missing, when memAvailReal is
 // missing, or when the used memory is below 0. A missing memBuffer or
 // memCached counts as 0, because some devices have no such object.
-func MemoryUCD(ctx context.Context, r Reader) (percent float64, ok bool, err error) {
+func MemoryUCD(ctx context.Context, r Reader) (mem Memory, ok bool, err error) {
 	vals, err := r.Get(ctx, []string{oidMemTotalReal, oidMemAvailReal, oidMemBuffer, oidMemCached})
 	if err != nil {
-		return 0, false, err
+		return Memory{}, false, err
 	}
 	total, okTotal := numeric(vals, 0)
 	avail, okAvail := numeric(vals, 1)
 	buffer, _ := numeric(vals, 2)
 	cached, _ := numeric(vals, 3)
+	// why: a negative value is a device error. Count it as 0, so the percent
+	// and the bytes agree.
+	buffer, cached = max(buffer, 0), max(cached, 0)
 	if !okTotal || total <= 0 || !okAvail {
-		return 0, false, nil
+		return Memory{}, false, nil
 	}
 	used := total - avail - buffer - cached
 	if used < 0 {
-		return 0, false, nil
+		return Memory{}, false, nil
 	}
-	return float64(used) / float64(total) * 100, true, nil
+	return Memory{
+		Percent:   float64(used) / float64(total) * 100,
+		Total:     uint64(total) * 1024,
+		Used:      uint64(used) * 1024,
+		BuffCache: uint64(buffer+cached) * 1024,
+	}, true, nil
+}
+
+// Uptime gives sysUpTime in seconds. The value is in 1/100 s. It is the
+// uptime of the SNMP service of the Target. A missing value or a failed read
+// gives 0: the uptime is not a rule, so it never fails a read.
+func Uptime(ctx context.Context, r Reader) uint64 {
+	vals, err := r.Get(ctx, []string{oidSysUpTime})
+	if err != nil || len(vals) == 0 {
+		return 0
+	}
+	switch vals[0].Type {
+	case TypeTimeTicks, TypeInteger, TypeGauge, TypeCounter:
+		return uint64(max(vals[0].Int, 0) / 100)
+	}
+	return 0
 }
 
 // numeric returns the number at index i. ok is false for a missing value or

@@ -10,8 +10,8 @@
 // The command loads the config before it opens a WebSocket. On a config
 // error it writes the error to stderr and exits with code 1.
 //
-// Until the SNMP reads exist (beszel#007, beszel#008), each Target reports
-// the fixed data of the stub source.
+// Each Target reports its own data: the table rules of its Profile, the CPU,
+// the memory and the uptime.
 package main
 
 import (
@@ -22,8 +22,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/henrygd/beszel/internal/common"
-	"github.com/henrygd/beszel/internal/entities/system"
 	"github.com/henrygd/beszel/internal/snmpbridge"
 )
 
@@ -39,23 +37,9 @@ func main() {
 		logger.Error("stop", "err", err)
 		os.Exit(1)
 	}
-	targets := make([]snmpbridge.Target, 0, len(cfg.Targets))
-	for _, t := range cfg.Targets {
-		targets = append(targets, t.Target)
-	}
-	bridge := &snmpbridge.Bridge{
-		HubURL:  settings.HubURL,
-		Token:   settings.Token,
-		Keys:    settings.Keys,
-		Targets: targets,
-		Source: func(t snmpbridge.Target) snmpbridge.Source {
-			stub := snmpbridge.StubSource{Name: t.Name}
-			return snmpbridge.NewScheduler(func(_ context.Context, opts common.DataRequestOptions) (*system.CombinedData, error) {
-				return stub.Data(opts)
-			})
-		},
-		Logger: logger,
-	}
+	bridge := snmpbridge.NewBridge(cfg, settings, func(t snmpbridge.TargetConfig) snmpbridge.Reader {
+		return snmpbridge.NewGoSNMPReader(t)
+	}, logger)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	bridge.Run(ctx)
