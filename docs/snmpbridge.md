@@ -56,14 +56,18 @@ Stop the bridge first. A change of a fingerprint record sets a connected system 
 1. Stop the bridge.
 2. Open the PocketBase page of the hub at `/_/`, and sign in as a superuser.
 3. Open the collection `fingerprints`.
-4. Set the field `token` of each fingerprint record of the bridge to the new value.
+4. Set the field `token` of each old fingerprint record of the bridge to the new value. These records hold the old token. In the edit panel, change the field, click "Unlock to save", and then click "Save changes".
 5. Set the new value in `TOKEN`.
 6. Start the bridge.
 7. Check that each Target shows in its old system and that no duplicate system exists.
 
 If you already have duplicate systems, delete them in the hub after the repair.
 
-A test saves the new value in the fingerprint records in code, and shows that each Target then uses its old system. No test used the PocketBase page itself.
+A test saves the new value in the fingerprint records in code, and shows that each Target then uses its old system.
+
+A browser test also did these steps on the PocketBase page of the stock hub 0.21.2, with PocketBase 0.42.2. It started with 2 duplicate systems.
+
+After the repair, each Target used its old system, and the 2 duplicate systems showed as down. The delete of the duplicate systems did not change the old systems.
 
 ### System deletion
 
@@ -115,6 +119,56 @@ targets:
     version: 2c
     profile: switch
     community_file: /run/secrets/switch-1-community
+```
+
+### Example for the 2 Targets
+
+The file `internal/snmpbridge/testdata/bridge.yaml` is one complete config for the 2 Targets of the local stack: `nas-bmc` and `cgw-fiber`. It reads the communities from variables.
+
+The file `internal/snmpbridge/testdata/compose.yaml` runs it with snmpsim and the stock hub.
+
+```yaml
+profiles:
+  nas-bmc:
+    tables:
+      - oid: .1.3.6.1.4.1.21317.1.3.1
+        name_column: 13
+        value_column: 2
+        kind: temperature
+        match: 'Temp$'
+        exclude: '^(CPU2|Vcpu2VRM|VmemEFVRM|VmemGHVRM|P[12]-DIMM[C-H])'
+      - oid: .1.3.6.1.4.1.21317.1.3.1
+        name_column: 13
+        value_column: 2
+        kind: fan
+        match: '^FAN'
+        exclude: '^FAN(1|3|4|A|B)$'
+  cgw-fiber:
+    cpu: ucd
+    memory: ucd
+    tables:
+      - oid: .1.3.6.1.4.1.2021.13.16.2.1
+        name_column: 2
+        value_column: 3
+        kind: temperature
+        scale: 1000
+        exclude: '^temp3$'
+      - oid: .1.3.6.1.4.1.2021.13.16.3.1
+        name_column: 2
+        value_column: 3
+        kind: fan
+        exclude: '^fan2$'
+targets:
+  - id: nas-bmc
+    name: NAS BMC
+    host: snmpsim
+    profile: nas-bmc
+    community_env: NAS_BMC_COMMUNITY
+  - id: cgw-fiber
+    name: CGW-Fiber
+    host: snmpsim
+    profile: cgw-fiber
+    community_env: CGW_FIBER_COMMUNITY
 ```
 
 ### Rules of the file
@@ -307,7 +361,11 @@ A connection can close for a different reason, for example a hub restart. The br
 
 The hub log of a Target that is down shows an SSH error: `connection refused` on port 45876. The hub tries SSH after it closes the WebSocket. This error is not the cause.
 
-The real reason is in the log of the bridge.
+The real reason is in the log of the bridge. The bridge writes one warning line when a read of a Target fails: `read failed`, with the Target and the error text.
+
+A Target that fails again and again gives this line one time, until a read is good. Then the bridge writes one line: `read is good again`.
+
+A table rule that fails also writes its own line, so a Target can give more than one line. The error text never holds the community.
 
 ### Image
 
@@ -324,3 +382,5 @@ Run `scripts/check-snmpbridge-image.sh` to check the image. The script builds th
 ## Status of this version
 
 This version loads and checks the config. The running bridge reads each Target with the SNMP reader, the rules of its Profile and the read timing. It reports the data of the Target, with CPU, memory and uptime.
+
+A browser test ran the bridge against snmpsim and the stock hub 0.21.2. Both Targets showed with fans and temperatures. When snmpsim stopped, both systems showed as down in 42 s, and they were up again 62 s after the start.

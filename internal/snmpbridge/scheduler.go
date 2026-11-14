@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -45,6 +46,16 @@ type Scheduler struct {
 	failed   bool
 	// busy is true while a Read call runs, also after its deadline.
 	busy bool
+	// log writes one line when a read fails and one when it is good again.
+	// nil means no log.
+	log *onceLog
+}
+
+// SetLogger sets the logger of the Scheduler. Call it before the first read.
+func (s *Scheduler) SetLogger(l *slog.Logger) {
+	s.mu.Lock()
+	s.log = &onceLog{log: l}
+	s.mu.Unlock()
 }
 
 var _ Source = (*Scheduler)(nil)
@@ -149,8 +160,21 @@ func (s *Scheduler) run(f *flight) {
 	s.inflight = nil
 	s.haveLast = true
 	s.lastData, s.lastErr = r.data, r.err
+	wasFailed := s.failed
 	s.failed = r.err != nil
+	lg := s.log
 	s.mu.Unlock()
+	// why: the client sends the error to the hub and logs nothing, so the
+	// reason of a failed read is only in the log of this line. The once log
+	// makes 5 failed reads give one line.
+	if lg != nil {
+		if r.err != nil {
+			lg.write(slog.LevelWarn, "read", "read failed", "err", r.err)
+		} else if wasFailed {
+			lg.reset()
+			lg.log.Info("read is good again")
+		}
+	}
 	f.data, f.err = r.data, r.err
 	close(f.done)
 }

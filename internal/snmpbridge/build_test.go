@@ -168,6 +168,23 @@ func (d *deadlineReader) Walk(ctx context.Context, oid string) ([]Value, error) 
 	return d.Reader.Walk(ctx, oid)
 }
 
+// Guard: the command must give each scheduler the logger of the bridge. With
+// no logger, a failed read leaves no reason in the log.
+func TestNewBridgeLogsAFailedReadWithTheTarget(t *testing.T) {
+	cfg := &Config{
+		Profiles: map[string]Profile{"cgw": cgwProfile()},
+		Targets:  []TargetConfig{{Target: Target{ID: "cgw-1", Name: "CGW"}, Profile: "cgw"}},
+	}
+	var buf syncBuffer
+	b := NewBridge(cfg, &Settings{}, func(TargetConfig) Reader {
+		return &FakeReader{Err: true, TargetID: "cgw-1"}
+	}, slog.New(slog.NewTextHandler(&buf, nil)))
+	_, err := b.Source(b.Targets[0]).Data(common.DataRequestOptions{})
+	require.Error(t, err)
+	assert.Contains(t, buf.String(), "read failed")
+	assert.Contains(t, buf.String(), "target=cgw-1")
+}
+
 // Guard: the command must give each Target its own data, through the
 // scheduler. A Target that gets the stub data, or a read with no deadline,
 // shows wrong data or blocks for a Target that does not answer.

@@ -29,7 +29,14 @@ func NewBridge(cfg *Config, settings *Settings, newReader func(TargetConfig) Rea
 				Reader:  newReader(tc),
 				Logger:  logger,
 			}
-			return NewScheduler(ts.Read)
+			sched := NewScheduler(ts.Read)
+			// why: like Bridge.Run, use the default logger when none is given.
+			l := logger
+			if l == nil {
+				l = slog.Default()
+			}
+			sched.SetLogger(l.With("target", t.ID))
+			return sched
 		},
 		Logger: logger,
 	}

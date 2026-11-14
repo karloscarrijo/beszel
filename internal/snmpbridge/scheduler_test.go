@@ -3,6 +3,8 @@ package snmpbridge
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -175,4 +177,61 @@ func TestSchedulerDeadlineFailsTheRead(t *testing.T) {
 	close(late)
 	time.Sleep(20 * time.Millisecond)
 	assert.True(t, s.Failed(), "a late reply must not clear the failure")
+}
+
+// Guard: a failed read with no log line leaves the operator with no reason
+// ("the real reason is in the log of the bridge"). 5 failed reads must give
+// one line, and the first good read after them one line.
+func TestSchedulerLogsFailedReadOnceAndRecovery(t *testing.T) {
+	var buf syncBuffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	fail := atomic.Bool{}
+	fail.Store(true)
+	s, clk := newClockScheduler(func(context.Context, common.DataRequestOptions) (*system.CombinedData, error) {
+		if fail.Load() {
+			return nil, errors.New("request timeout (after 2 retries)")
+		}
+		return goodData(1), nil
+	})
+	s.SetLogger(logger.With("target", "nas-bmc"))
+	for range 5 {
+		_, err := s.Data(common.DataRequestOptions{})
+		require.Error(t, err)
+		clk.Advance(MinReadGap)
+	}
+	out := buf.String()
+	assert.Equal(t, 1, strings.Count(out, "read failed"), out)
+	assert.Contains(t, out, "target=nas-bmc")
+	assert.Contains(t, out, "request timeout")
+
+	fail.Store(false)
+	_, err := s.Data(common.DataRequestOptions{})
+	require.NoError(t, err)
+	clk.Advance(MinReadGap)
+	_, err = s.Data(common.DataRequestOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(buf.String(), "read is good again"), buf.String())
+
+	// A new failure after the recovery logs again.
+	fail.Store(true)
+	clk.Advance(MinReadGap)
+	_, _ = s.Data(common.DataRequestOptions{})
+	assert.Equal(t, 2, strings.Count(buf.String(), "read failed"), buf.String())
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

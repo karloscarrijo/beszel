@@ -1,0 +1,46 @@
+# Local stack for the SNMP bridge: one snmpsim container, the stock hub and the
+# bridge. All values are examples. Run it from this folder:
+#
+#   docker compose up -d snmpsim hub
+#   # 1. Open http://localhost:8090, make the first user, turn on the
+#   #    permanent universal token in "Tokens and fingerprints", and copy the
+#   #    token and the public key.
+#   # 2. Start the bridge with them:
+#   TOKEN=<token> KEY='<public key>' docker compose up -d --build bridge
+#
+# snmpsim uses the name of each .snmprec file in this folder as the community:
+# `nas-bmc` and `cgw-fiber`. Stop the snmpsim container to test a Target that
+# does not answer: `docker compose stop snmpsim`.
+services:
+  snmpsim:
+    image: tandrup/snmpsim@sha256:5140279e9080b2053febf8676f6c338f3723b0d06be8b77cf7e4657876e5c17c
+    volumes:
+      - ./:/usr/local/snmpsim/data:ro
+
+  hub:
+    image: henrygd/beszel:0.21.2
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - hub-data:/beszel_data
+
+  bridge:
+    build:
+      context: ../../..
+      dockerfile: internal/dockerfile_snmpbridge
+    depends_on:
+      - snmpsim
+      - hub
+    environment:
+      HUB_URL: http://hub:8090
+      # The bridge stops with an error that names the variable when one is empty.
+      TOKEN: ${TOKEN:-}
+      KEY: ${KEY:-}
+      SNMPBRIDGE_CONFIG: /config/bridge.yaml
+      NAS_BMC_COMMUNITY: nas-bmc
+      CGW_FIBER_COMMUNITY: cgw-fiber
+    volumes:
+      - ./bridge.yaml:/config/bridge.yaml:ro
+
+volumes:
+  hub-data:

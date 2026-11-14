@@ -1,0 +1,42 @@
+# Config of the bridge in compose.yaml. The 2 Targets read the snmpsim container.
+profiles:
+  nas-bmc:
+    tables:
+      - oid: .1.3.6.1.4.1.21317.1.3.1
+        name_column: 13
+        value_column: 2
+        kind: temperature
+        match: 'Temp$'
+        exclude: '^(CPU2|Vcpu2VRM|VmemEFVRM|VmemGHVRM|P[12]-DIMM[C-H])'
+      - oid: .1.3.6.1.4.1.21317.1.3.1
+        name_column: 13
+        value_column: 2
+        kind: fan
+        match: '^FAN'
+        exclude: '^FAN(1|3|4|A|B)$'
+  cgw-fiber:
+    cpu: ucd
+    memory: ucd
+    tables:
+      - oid: .1.3.6.1.4.1.2021.13.16.2.1
+        name_column: 2
+        value_column: 3
+        kind: temperature
+        scale: 1000
+        exclude: '^temp3$'
+      - oid: .1.3.6.1.4.1.2021.13.16.3.1
+        name_column: 2
+        value_column: 3
+        kind: fan
+        exclude: '^fan2$'
+targets:
+  - id: nas-bmc
+    name: NAS BMC
+    host: snmpsim
+    profile: nas-bmc
+    community_env: NAS_BMC_COMMUNITY
+  - id: cgw-fiber
+    name: CGW-Fiber
+    host: snmpsim
+    profile: cgw-fiber
+    community_env: CGW_FIBER_COMMUNITY
