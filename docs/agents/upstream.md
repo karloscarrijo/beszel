@@ -17,6 +17,7 @@ The owner approves each text before it goes to GitHub: a feature request, a PR b
 - One feature in one PR. Keep the PR small: aim for less than 600 changed lines.
 - Add Go tests with mocked input. Run `make test`. A reviewer must be able to test with no special hardware.
 - Follow an existing pattern, and name it in the PR description.
+- Comments in a file that goes to upstream: write the reason as a plain sentence, and name an upstream issue as `(#1361)`. Example: `// trim trailing backslash for Windows devices (#1361)`. Keep the `why:` prefix for the files that stay in the fork. Why: upstream code has no `why:` comment.
 - Make a new feature opt-in when it needs hardware or a tool that not all systems have.
 - Add no heavy dependency. Use no Cgo and no `sudo`.
 - Keep the payload from the agent to the hub small.
