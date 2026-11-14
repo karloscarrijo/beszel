@@ -44,8 +44,10 @@ ff_main() {
 }
 
 LOG=""
+LOG2=""
 cleanup() {
   [ -z "$LOG" ] || rm -f "$LOG"
+  [ -z "$LOG2" ] || rm -f "$LOG2"
   if [ -n "$TMP" ] && [ -d "$TMP" ]; then
     git worktree remove --force "$TMP" >/dev/null 2>&1 || true
     rm -rf "$TMP"
@@ -205,8 +207,21 @@ if [ "$rc" -ne 0 ]; then
   [ "${#pkgs[@]}" -gt 0 ] || die "tests failed and the output names no failed package"
   say "step 8: retry the failed packages: ${pkgs[*]}"
   rc2=0
-  (cd "$TMP" && bash -c "$RETEST_CMD \"\$@\"" _ "${pkgs[@]}") || rc2=$?
-  [ "$rc2" -eq 0 ] || die "failed packages fail again in the retry: ${pkgs[*]}"
+  LOG2="$(mktemp)"
+  log2="$LOG2"
+  # why: tee shows the retry output while it runs. The retry of a slow package takes minutes.
+  (cd "$TMP" && bash -c "$RETEST_CMD \"\$@\"" _ "${pkgs[@]}") 2>&1 | tee "$log2" || rc2=${PIPESTATUS[0]}
+  if [ "$rc2" -ne 0 ]; then
+    if awk -F'\t' '$1 == "FAIL" && $2 ~ / \[/ {f=1} END {exit !f}' "$log2"; then
+      die "the retry failed with a build or setup error"
+    fi
+    # why: name only the packages that fail in the retry, not those of the first run.
+    mapfile -t pkgs2 < <(awk -F'\t' '$1 == "FAIL" && NF >= 2 {print $2}' "$log2" | sort -u)
+    if [ "${#pkgs2[@]}" -gt 0 ]; then
+      die "failed packages fail again in the retry: ${pkgs2[*]}"
+    fi
+    die "the retry failed and its output names no failed package"
+  fi
   echo "[sync] WARNING: flaky tests failed in the first run and passed in the retry:" >&2
   grep -E '^\s*--- FAIL:' "$log" | sed 's/^\s*/[sync]   /' >&2 || true
 fi

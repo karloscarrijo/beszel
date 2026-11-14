@@ -168,6 +168,28 @@ check "warning names the failed test" "$(grep -q 'TestSlow' <<<"$OUT" && echo 0 
 check "retry got the failed package" "$(grep -q 'pkg/a' "$STUB/retest-args" && echo 0 || echo 1)"
 check "tag made" "$(t git -C "$CLONE" rev-parse -q --verify refs/tags/bridge-v0.1.0 && echo 0 || echo 1)"
 
+echo "== tests fail in 2 packages and the retry fails in 1 =="
+printf '#!/bin/bash\nprintf "FAIL\\tpkg/a\\t0.1s\\nFAIL\\tpkg/b\\t0.1s\\n"\nexit 1\n' >"$STUB/fail2.sh"
+printf '#!/bin/bash\nprintf "ok\\tpkg/a\\t0.1s\\nFAIL\\tpkg/b\\t0.1s\\n"\nexit 1\n' >"$STUB/retest-fail-b.sh"
+chmod +x "$STUB"/*.sh
+setup
+s1="$(snap)"
+SYNC_TEST_CMD="$STUB/fail2.sh" SYNC_RETEST_CMD="$STUB/retest-fail-b.sh" run
+check "exit 1" "$([ "$CODE" -eq 1 ] && echo 0 || echo 1)"
+check "STOP line names only pkg/b" "$(grep 'fail again in the retry' <<<"$OUT" | grep -q 'pkg/b' && ! grep 'fail again in the retry' <<<"$OUT" | grep -q 'pkg/a' && echo 0 || echo 1)"
+check "retry output shows" "$(grep -q 'ok.*pkg/a' <<<"$OUT" && echo 0 || echo 1)"
+check "nothing changed" "$([ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
+
+echo "== the retry fails with no package line, or with a build error =="
+printf '#!/bin/bash\necho "crash"\nexit 1\n' >"$STUB/retest-crash.sh"
+printf '#!/bin/bash\nprintf "FAIL\\tpkg/a [build failed]\\n"\nexit 1\n' >"$STUB/retest-build.sh"
+chmod +x "$STUB"/*.sh
+SYNC_TEST_CMD="$STUB/fail2.sh" SYNC_RETEST_CMD="$STUB/retest-crash.sh" run
+check "no package line: exit 1 and a clear message" "$([ "$CODE" -eq 1 ] && grep -q 'names no failed package' <<<"$OUT" && echo 0 || echo 1)"
+SYNC_TEST_CMD="$STUB/fail2.sh" SYNC_RETEST_CMD="$STUB/retest-build.sh" run
+check "build error: exit 1 and a clear message" "$([ "$CODE" -eq 1 ] && grep -q 'build or setup error' <<<"$OUT" && echo 0 || echo 1)"
+check "nothing changed" "$([ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
+
 echo "== --dry-run =="
 setup
 s1="$(snap)"
