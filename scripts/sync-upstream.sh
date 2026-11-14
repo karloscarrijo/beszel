@@ -33,6 +33,16 @@ die() {
   exit 1
 }
 
+check_main() {
+  git merge-base --is-ancestor refs/heads/main refs/remotes/upstream/main ||
+    die "main cannot fast-forward to upstream/main"
+}
+# The fetch refuses a main that is checked out in a different worktree.
+ff_main() {
+  git fetch --no-tags . refs/remotes/upstream/main:refs/heads/main ||
+    die "cannot fast-forward main to upstream/main"
+}
+
 LOG=""
 cleanup() {
   [ -z "$LOG" ] || rm -f "$LOG"
@@ -74,6 +84,9 @@ git rev-parse -q --verify refs/heads/main >/dev/null ||
   die "local branch main is missing. Run: git branch main origin/main"
 git merge-base --is-ancestor refs/remotes/origin/bridge HEAD ||
   die "local bridge does not hold origin/bridge. Run: git pull"
+# why: origin/main with a commit that upstream/main does not have makes the push of main fail.
+git merge-base --is-ancestor refs/remotes/origin/main refs/remotes/upstream/main ||
+  die "origin/main has commits that are not in upstream/main"
 
 # Step 3: highest plain vX.Y.Z tag of upstream.
 line="$(git ls-remote --tags --refs upstream |
@@ -91,17 +104,53 @@ git merge-base --is-ancestor "$commit" refs/remotes/upstream/main ||
   die "$release ($commit) is not an ancestor of upstream/main"
 say "step 4: $release is an ancestor of upstream/main"
 
-# Step 5: is the release already in bridge?
+# Step 5: is the release already in bridge, and does origin have bridge and the newest tag?
 in_bridge=0
 if git merge-base --is-ancestor "$commit" HEAD; then in_bridge=1; fi
-if [ "$in_bridge" = 1 ] && [ -n "$(git tag --points-at HEAD --list 'bridge-v*')" ]; then
-  say "step 5: nothing to do ($release is in bridge and bridge has a bridge-v* tag)"
+headtag="$(git tag --points-at HEAD --list 'bridge-v*' | sort -V | tail -n 1)"
+last="$(git tag --list 'bridge-v*' | grep -E '^bridge-v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+# why: after a failed push the local refs and the tag moved, and origin did not.
+# Check the newest tag, not only the tag on HEAD: a new upstream release must not hide it.
+if [ -n "$last" ]; then
+  remote_tag="$(git ls-remote --tags --refs origin "refs/tags/$last")" ||
+    die "cannot read the tags of origin"
+  remote_tag="${remote_tag%%[[:space:]]*}"
+  if [ "$remote_tag" != "$(git rev-parse "refs/tags/$last")" ] ||
+    { [ "$last" = "$headtag" ] && [ "$(git rev-parse refs/remotes/origin/bridge)" != "$(git rev-parse HEAD)" ]; }; then
+    say "step 5: origin does not have $last or bridge (a push failed)"
+    if [ "$DRY" = 1 ]; then
+      say "dry run: would fast-forward main, then push main, bridge and $last again, with no new test run"
+      exit 0
+    fi
+    # why: origin/main can have moved since the failed push. upstream/main holds it (step 2).
+    ff_main
+    # why: the tag marks the tested commit, so a new test run is not necessary.
+    git push --atomic origin main bridge "refs/tags/$last" ||
+      die "push failed. Fix the cause, then run the script again"
+    say "step 5: pushed main, bridge and $last with no new test run"
+    [ "$in_bridge" = 1 ] || say "run the script again to sync $release"
+    exit 0
+  fi
+fi
+if [ "$in_bridge" = 1 ] && [ -n "$headtag" ]; then
+  if [ "$(git rev-parse refs/remotes/origin/main)" = "$(git rev-parse refs/remotes/upstream/main)" ]; then
+    say "step 5: nothing to do ($release is in bridge, and origin has bridge, $headtag and main)"
+    exit 0
+  fi
+  # why: main mirrors upstream, also when upstream has no new release.
+  check_main
+  if [ "$DRY" = 1 ]; then
+    say "dry run: bridge is up to date, would fast-forward main to upstream/main and push main"
+    exit 0
+  fi
+  ff_main
+  git push origin main || die "push of main failed"
+  say "step 5: bridge is up to date, pushed main"
   exit 0
 fi
 say "step 5: release in bridge: $([ "$in_bridge" = 1 ] && echo yes || echo no)"
 
 # New tag name.
-last="$(git tag --list 'bridge-v*' | grep -E '^bridge-v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
 if [ -z "$last" ]; then
   newtag="bridge-v0.1.0"
 else
@@ -115,8 +164,7 @@ else
 fi
 
 # Step 6: main must fast-forward to upstream/main.
-git merge-base --is-ancestor refs/heads/main refs/remotes/upstream/main ||
-  die "main cannot fast-forward to upstream/main"
+check_main
 say "step 6: main can fast-forward to upstream/main"
 
 # Step 7: merge in a temporary worktree.
@@ -125,9 +173,13 @@ git worktree add --detach "$TMP" refs/heads/bridge >/dev/null
 if [ "$in_bridge" = 1 ]; then
   say "step 7: release already in bridge, no merge"
 else
-  if ! git -C "$TMP" merge --no-ff -m "chore(fork): merge upstream $release" "$commit" >/dev/null 2>&1; then
+  if ! mout="$(git -C "$TMP" merge --no-ff -m "chore(fork): merge upstream $release" "$commit" 2>&1)"; then
     files="$(git -C "$TMP" diff --name-only --diff-filter=U)"
     git -C "$TMP" merge --abort >/dev/null 2>&1 || true
+    if [ -z "$files" ]; then
+      echo "$mout" | sed 's/^/[sync]   /' >&2
+      die "merge of $release failed with no conflict. Merge aborted"
+    fi
     echo "[sync] conflict in:" >&2
     echo "$files" | sed 's/^/[sync]   /' >&2
     die "merge conflict with $release. Merge aborted"
@@ -167,9 +219,10 @@ if [ "$DRY" = 1 ]; then
 fi
 
 # Step 9: move the branches and make the tag.
+# why: main first. The fetch refuses a main that is checked out in a different worktree,
+# and a stop then must not leave a moved bridge with no tag.
+ff_main
 git merge --ff-only "$tested" >/dev/null || die "cannot fast-forward bridge to $tested"
-git fetch --no-tags . refs/remotes/upstream/main:refs/heads/main ||
-  die "cannot fast-forward main to upstream/main"
 git tag "$newtag" "$tested"
 say "step 9: main and bridge moved, tag $newtag on $tested"
 

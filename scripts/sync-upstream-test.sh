@@ -81,6 +81,7 @@ mkdir -p "$STUB"
 printf '#!/bin/bash\nexit 0\n' >"$STUB/pass.sh"
 printf '#!/bin/bash\nprintf "%%s\\n" "--- FAIL: TestSlow (0.10s)" "FAIL"; printf "FAIL\\tpkg/a\\t0.1s\\n"\nexit 1\n' >"$STUB/fail.sh"
 printf '#!/bin/bash\necho "build error"\nexit 1\n' >"$STUB/builderr.sh"
+printf '#!/bin/bash\nprintf "FAIL\\tpkg/a [build failed]\\n"\nexit 1\n' >"$STUB/buildfail.sh"
 printf '#!/bin/bash\necho "$@" >"%s/retest-args"\nexit 0\n' "$STUB" >"$STUB/retest-pass.sh"
 printf '#!/bin/bash\nexit 1\n' >"$STUB/retest-fail.sh"
 chmod +x "$STUB"/*.sh
@@ -155,6 +156,11 @@ SYNC_TEST_CMD="$STUB/builderr.sh" run
 check "exit 1" "$([ "$CODE" -eq 1 ] && echo 0 || echo 1)"
 check "nothing changed" "$([ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
 
+echo "== tests fail with [build failed] =="
+SYNC_TEST_CMD="$STUB/buildfail.sh" SYNC_RETEST_CMD="$STUB/retest-pass.sh" run
+check "exit 1 with build error, no retry" "$([ "$CODE" -eq 1 ] && grep -q 'build or setup error' <<<"$OUT" && ! grep -q 'retry' <<<"$OUT" && echo 0 || echo 1)"
+check "nothing changed" "$([ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
+
 echo "== tests fail and the retry passes =="
 SYNC_TEST_CMD="$STUB/fail.sh" SYNC_RETEST_CMD="$STUB/retest-pass.sh" run
 check "exit 0" "$CODE"
@@ -200,6 +206,81 @@ printf '#!/bin/sh\nexit 1\n' >"$ORIGIN/hooks/pre-receive"
 chmod +x "$ORIGIN/hooks/pre-receive"
 run
 check "exit 1 with push command" "$([ "$CODE" -eq 1 ] && grep -q 'push failed' <<<"$OUT" && echo 0 || echo 1)"
+check "origin unchanged after the failed push" "$(t git -C "$ORIGIN" rev-parse -q --verify refs/tags/bridge-v0.1.0 && echo 1 || echo 0)"
+rm "$ORIGIN/hooks/pre-receive"
+s1="$(snap)"
+SYNC_TEST_CMD="$STUB/fail.sh" SYNC_RETEST_CMD="$STUB/retest-fail.sh" run --dry-run
+check "dry run after failed push: exit 0, would push, no change" "$([ "$CODE" -eq 0 ] && grep -q 'push main, bridge and bridge-v0.1.0 again' <<<"$OUT" && [ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
+# A failing test stub: a new test run makes the run exit 1.
+SYNC_TEST_CMD="$STUB/fail.sh" SYNC_RETEST_CMD="$STUB/retest-fail.sh" run
+check "run after failed push: exit 0" "$CODE"
+check "run after failed push: not 'nothing to do', no test run" "$(grep -q 'nothing to do' <<<"$OUT" || grep -q 'step 8' <<<"$OUT" && echo 1 || echo 0)"
+check "origin then has main, bridge and the tag" "$([ "$(git -C "$ORIGIN" rev-parse main bridge bridge-v0.1.0 2>/dev/null | tr '\n' ' ')" = "$(git -C "$CLONE" rev-parse main bridge bridge-v0.1.0 | tr '\n' ' ')" ] && echo 0 || echo 1)"
+run
+check "third run: nothing to do" "$([ "$CODE" -eq 0 ] && grep -q 'nothing to do' <<<"$OUT" && echo 0 || echo 1)"
+
+echo "== upstream main moves with no new release =="
+commit "$UP" f.txt f "no release"
+s1="$(git -C "$CLONE" rev-parse bridge; git -C "$CLONE" tag --list)"
+run
+check "exit 0, main pushed, no test run" "$([ "$CODE" -eq 0 ] && ! grep -q 'step 8' <<<"$OUT" && echo 0 || echo 1)"
+check "origin main equals upstream main" "$([ "$(git -C "$ORIGIN" rev-parse main)" = "$(git -C "$UP" rev-parse main)" ] && echo 0 || echo 1)"
+check "bridge and tags unchanged" "$([ "$s1" = "$(git -C "$CLONE" rev-parse bridge; git -C "$CLONE" tag --list)" ] && echo 0 || echo 1)"
+
+echo "== origin/main has a commit that upstream/main does not have =="
+setup
+git -C "$CLONE" checkout -q main
+commit "$CLONE" om.txt om "only on origin main"
+git -C "$CLONE" push -q origin main
+git -C "$CLONE" reset -q --hard HEAD~1
+git -C "$CLONE" checkout -q bridge
+s1="$(snap)"
+run
+check "exit 1 with reason" "$([ "$CODE" -eq 1 ] && grep -q 'origin/main has commits' <<<"$OUT" && echo 0 || echo 1)"
+check "nothing changed" "$([ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
+
+echo "== merge fails with no conflict =="
+setup
+printf '#!/bin/sh\necho "hook says no"\nexit 1\n' >"$CLONE/.git/hooks/pre-merge-commit"
+chmod +x "$CLONE/.git/hooks/pre-merge-commit"
+s1="$(snap)"
+run
+check "exit 1, git error shown, not a conflict" "$([ "$CODE" -eq 1 ] && grep -q 'hook says no' <<<"$OUT" && grep -q 'failed with no conflict' <<<"$OUT" && ! grep -q 'conflict in' <<<"$OUT" && echo 0 || echo 1)"
+check "nothing changed" "$([ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
+
+echo "== main checked out in a different worktree =="
+setup
+git -C "$CLONE" worktree add -q "$(dirname "$CLONE")/mainwt" main
+s1="$(snap)"
+run
+check "exit 1 at the fetch into main, after the tests" "$([ "$CODE" -eq 1 ] && grep -q 'step 8: tests pass' <<<"$OUT" && grep -q 'cannot fast-forward main to upstream/main' <<<"$OUT" && echo 0 || echo 1)"
+check "bridge, main, tags, origin unchanged" "$([ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
+
+echo "== failed push, then a new upstream release =="
+setup
+printf '#!/bin/sh\nexit 1\n' >"$ORIGIN/hooks/pre-receive"
+chmod +x "$ORIGIN/hooks/pre-receive"
+run
+rm "$ORIGIN/hooks/pre-receive"
+commit "$UP" g.txt g "c4"
+git -C "$UP" tag v0.10.1
+SYNC_TEST_CMD="$STUB/fail.sh" SYNC_RETEST_CMD="$STUB/retest-fail.sh" run
+check "exit 0, old tag pushed, asks for a new run" "$([ "$CODE" -eq 0 ] && grep -q 'run the script again to sync v0.10.1' <<<"$OUT" && echo 0 || echo 1)"
+check "origin has bridge-v0.1.0 and bridge" "$([ "$(git -C "$ORIGIN" rev-parse bridge bridge-v0.1.0 2>/dev/null | tr '\n' ' ')" = "$(git -C "$CLONE" rev-parse bridge bridge-v0.1.0 | tr '\n' ' ')" ] && echo 0 || echo 1)"
+run
+check "next run syncs v0.10.1 as bridge-v0.1.1" "$([ "$CODE" -eq 0 ] && t git -C "$ORIGIN" rev-parse -q --verify refs/tags/bridge-v0.1.1 && echo 0 || echo 1)"
+
+echo "== failed push, then origin/main moves =="
+setup
+printf '#!/bin/sh\nexit 1\n' >"$ORIGIN/hooks/pre-receive"
+chmod +x "$ORIGIN/hooks/pre-receive"
+run
+rm "$ORIGIN/hooks/pre-receive"
+commit "$UP" h.txt h "no release"
+git -C "$UP" push -q "$ORIGIN" main
+run
+check "exit 0, push not rejected" "$([ "$CODE" -eq 0 ] && grep -q 'pushed main, bridge and bridge-v0.1.0' <<<"$OUT" && echo 0 || echo 1)"
+check "origin has main of upstream, bridge and the tag" "$([ "$(git -C "$ORIGIN" rev-parse main bridge bridge-v0.1.0 2>/dev/null | tr '\n' ' ')" = "$({ git -C "$UP" rev-parse main; git -C "$CLONE" rev-parse bridge bridge-v0.1.0; } | tr '\n' ' ')" ] && echo 0 || echo 1)"
 
 echo
 echo "passed: $PASS, failed: $FAILED"
