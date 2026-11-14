@@ -12,5 +12,9 @@ A public fork of `henrygd/beszel`. It adds an SNMP bridge, and it offers small f
 - Never commit a secret, not even encrypted.
 - Issues for this repo live in `.scratch/issues/`. Before you create, move or close an issue, read `~/code/dotfiles/docs/agents/issue-tracker.md`. `.scratch` is a symlink to the vault. `.git/info/exclude` ignores it, because `.gitignore` is an upstream file.
 - Use no GitHub Actions, no Copilot and no GitHub issues, wiki, projects or discussions in the fork. Talk to upstream in the issues, discussions and PRs of `henrygd/beszel`.
-- Test level: not set. Before the first ticket that adds code, ask the owner for the level: Product (unit guards on logic), Tool (a test script for each tool that can break the workflow), Infra (lint, validate and dry run) or Design (no tests). Then replace this line with the level in plain words. For Product, add a "Main user paths" list.
+- Test level: Product. Each change to the logic gets a unit test with mocked input. Run the tests with `make test`. No test needs a real SNMP device: use `.snmprec` files and an in-process hub. Main user paths:
+  1. A Target shows in the hub as a system, with fans and temperatures.
+  2. A Target that does not answer shows as down.
+  3. The `FanLow` alert fires and clears.
+  4. The sync script stops when the protocol test fails.
 - Domain docs are one `GLOSSARY.md` and `docs/adr/` at the repo root. Before you explore the code, read `docs/agents/domain.md`.
