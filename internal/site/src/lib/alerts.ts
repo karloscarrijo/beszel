@@ -1,5 +1,5 @@
 import { t } from "@lingui/core/macro"
-import { ContainerIcon, CpuIcon, HardDriveIcon, MemoryStickIcon, NetworkIcon, ServerCrashIcon, ServerIcon, ShieldCheckIcon } from "lucide-react"
+import { ContainerIcon, CpuIcon, FanIcon, HardDriveIcon, MemoryStickIcon, NetworkIcon, ServerCrashIcon, ServerIcon, ShieldCheckIcon } from "lucide-react"
 import type { RecordSubscription } from "pocketbase"
 import { EthernetIcon, GpuIcon } from "@/components/ui/icons"
 import { $alerts } from "@/lib/stores"
@@ -129,6 +129,17 @@ export const alertInfo: Record<string, AlertInfo> = {
     icon: BatteryMediumIcon,
     desc: () => t`Triggers when battery charge drops below a threshold`,
     start: 20,
+    invert: true,
+  },
+  FanLow: {
+    name: () => t`Fan Speed`,
+    unit: " RPM",
+    icon: FanIcon,
+    desc: () => t`Triggers when the slowest fan drops below a threshold`,
+    start: 500,
+    min: 0,
+    max: 10000,
+    step: 100,
     invert: true,
   },
   ContainerHealth: {

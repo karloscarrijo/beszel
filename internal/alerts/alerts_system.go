@@ -3,6 +3,7 @@ package alerts
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -111,6 +112,13 @@ func (am *AlertManager) HandleSystemAlerts(systemRecord *core.Record, data *syst
 				continue
 			}
 			val = float64(data.Stats.Battery[0])
+		case "FanLow":
+			lowest, ok := lowestFanSpeed(data.Stats.Fans)
+			if !ok {
+				continue
+			}
+			val = lowest
+			unit = " RPM"
 		default:
 			var ok bool
 			if val, ok = cpuStateAlertValue(name, data.Stats.CpuBreakdown); !ok {
@@ -299,6 +307,12 @@ func (am *AlertManager) HandleSystemAlerts(systemRecord *core.Record, data *syst
 					continue
 				}
 				alert.val += float64(stats.Battery[0])
+			case "FanLow":
+				lowest, ok := lowestFanSpeed(stats.Fans)
+				if !ok {
+					continue
+				}
+				alert.val += lowest
 			default:
 				value, ok := cpuStateAlertValue(alert.name, stats.CpuBreakdown)
 				if !ok {
@@ -390,7 +404,13 @@ func hasRepresentativeBattery(legacy [2]uint8, batteries map[string]uint8) bool 
 func (am *AlertManager) sendSystemAlert(alert SystemAlertData) {
 	// log.Printf("Sending alert %s: val %f | count %d | threshold %f\n", alert.name, alert.val, alert.count, alert.threshold)
 	systemName := alert.systemRecord.GetString("name")
+	// check before the name changes to its display form below
+	lowAlert := isLowAlert(alert.name)
 
+	if alert.name == "FanLow" {
+		alert.name = "Fan speed"
+		alert.descriptor = "Slowest fan"
+	}
 	if state, ok := cpuStateAlerts[alert.name]; ok {
 		alert.name = state.label
 	}
@@ -410,7 +430,6 @@ func (am *AlertManager) sendSystemAlert(alert SystemAlertData) {
 	}
 
 	var subject string
-	lowAlert := isLowAlert(alert.name)
 	if alert.triggered {
 		if lowAlert {
 			subject = fmt.Sprintf("%s %s below threshold", systemName, titleAlertName)
@@ -448,5 +467,17 @@ func (am *AlertManager) sendSystemAlert(alert SystemAlertData) {
 }
 
 func isLowAlert(name string) bool {
-	return name == "Battery"
+	return name == "Battery" || name == "FanLow"
+}
+
+// lowestFanSpeed returns the speed of the slowest fan. A stopped fan (0 RPM) counts.
+func lowestFanSpeed(fans map[string]uint16) (float64, bool) {
+	if len(fans) == 0 {
+		return 0, false
+	}
+	lowest := uint16(math.MaxUint16)
+	for _, rpm := range fans {
+		lowest = min(lowest, rpm)
+	}
+	return float64(lowest), true
 }
