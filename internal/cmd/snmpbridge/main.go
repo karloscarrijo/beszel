@@ -22,6 +22,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/henrygd/beszel/internal/common"
+	"github.com/henrygd/beszel/internal/entities/system"
 	"github.com/henrygd/beszel/internal/snmpbridge"
 )
 
@@ -46,8 +48,13 @@ func main() {
 		Token:   settings.Token,
 		Keys:    settings.Keys,
 		Targets: targets,
-		Source:  func(t snmpbridge.Target) snmpbridge.Source { return snmpbridge.StubSource{Name: t.Name} },
-		Logger:  logger,
+		Source: func(t snmpbridge.Target) snmpbridge.Source {
+			stub := snmpbridge.StubSource{Name: t.Name}
+			return snmpbridge.NewScheduler(func(_ context.Context, opts common.DataRequestOptions) (*system.CombinedData, error) {
+				return stub.Data(opts)
+			})
+		},
+		Logger: logger,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

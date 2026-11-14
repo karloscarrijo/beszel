@@ -11,6 +11,12 @@ import (
 	"github.com/gosnmp/gosnmp"
 )
 
+// The limits of one SNMP request. ExponentialTimeout stays off.
+const (
+	requestTimeout = 3 * time.Second
+	requestRetries = 2
+)
+
 // GoSNMPReader reads one Target with gosnmp through SNMPv2c. It opens one
 // connection for each call, so it is safe for concurrent use.
 type GoSNMPReader struct {
@@ -34,10 +40,11 @@ func (r *GoSNMPReader) connect(ctx context.Context) (*gosnmp.GoSNMP, error) {
 		Port:      uint16(r.Port),
 		Community: r.Community,
 		Version:   gosnmp.Version2c,
-		// why: the context sets the deadline (beszel#008). This is only an
-		// upper limit when the context has none.
-		Timeout: 10 * time.Second,
-		Retries: 0,
+		// why: one lost UDP packet must not fail a rule. One request takes
+		// at most 3 s * (1 + 2 retries) = 9 s, below the 20 s read deadline.
+		// The context deadline still ends the full read.
+		Timeout: requestTimeout,
+		Retries: requestRetries,
 	}
 	if err := g.Connect(); err != nil {
 		return nil, err

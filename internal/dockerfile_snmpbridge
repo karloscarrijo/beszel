@@ -1,0 +1,27 @@
+FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source files
+COPY . ./
+
+RUN apk add --no-cache ca-certificates && update-ca-certificates
+
+# Build
+ARG TARGETOS TARGETARCH TARGETVARIANT
+RUN if [ "$TARGETARCH" = "arm" ] && [ -n "$TARGETVARIANT" ]; then \
+    export GOARM="${TARGETVARIANT#v}"; \
+  fi; \
+  CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-w -s" -o /snmpbridge ./internal/cmd/snmpbridge
+
+# --------------------------
+# Final image: scratch-based SNMP bridge
+# --------------------------
+FROM scratch
+COPY --from=builder /snmpbridge /snmpbridge
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+ENTRYPOINT ["/snmpbridge"]

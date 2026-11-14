@@ -14,7 +14,7 @@ The following list gives the main facts of this document.
 
 This document explains how the Simple Network Management Protocol (SNMP) bridge connects to a Beszel hub. It is an explanation for the person who runs the bridge.
 
-This version covers the token, the identity of a Target, the config file and the table rules of a Profile. It does not cover the read timing. It does not cover how the bridge sets a Target that does not answer down.
+This version covers the token, the identity of a Target, the config file, the table rules of a Profile, the read timing, the down status and the image.
 
 ## Token and identity
 
@@ -163,10 +163,6 @@ A missing `memBuffer` or `memCached` counts as 0.
 
 The Target `id` sets the fingerprint, so a changed `id` of a Target gives a new system. The old system shows as down. Delete the old system in the hub.
 
-### Status of this version
-
-This version loads and checks the config. It has the SNMP reader and reads the table rules of a Profile. The reader is not yet in the running bridge, so the running bridge still reports the fixed data of a stub.
-
 ## Profiles
 
 A Profile names the tables that the bridge reads from a Target. The bridge puts the fans in `Stats.Fans` and the temperatures in `Stats.Temperatures`. The hub then draws the charts with no UI change.
@@ -266,3 +262,49 @@ targets:
 ```
 
 A test reads the same rules against the recorded files of the 2 Targets and checks the fans and the temperatures. No test parses the YAML text of these examples.
+
+## Read timing and image
+
+The hub sends `GetData` to each Target each 60 s. It also sends `GetData` each second while the "1 minute" chart of a system is open. The bridge reads a Target at a safe rate, whatever the hub asks.
+
+### Rules of the read
+
+The following list gives the 5 rules. The times are constants, with no config key.
+
+1. The bridge makes one read at a time for each Target. A request that comes while a read runs waits for that read and gets its result. This also holds when the connection of the Target closes and opens again.
+2. A read starts at most each 10 s. In that time, the bridge replies with the last result: the good result or the error.
+3. One read has a deadline of 20 s. The hub waits 30 s. At the deadline the read fails, and the bridge drops a late reply of the device.
+4. After a failed read, the bridge replies with an error and never with an old result.
+5. After a failed read, the bridge does not connect that Target again until a read is good.
+
+One SNMP request gets 3 s and 2 retries, so it takes at most 9 s. One lost packet then does not fail a rule. The bridge ignores `CacheTimeMs`.
+
+A Target that gives no answer at all is a failed read. When only some rules answer, the rules that answer give data.
+
+### Down status
+
+A Target that does not answer shows in the hub as down, and the hub saves no new stats for it. The bridge reads such a Target again each 60 s. After the first good read, the bridge connects the Target, and the system shows as up again.
+
+At the start, each Target connects one time with no read first. A Target with a wrong address thus shows as down at once.
+
+A connection can close for a different reason, for example a hub restart. The bridge then connects again with a backoff and with no read first.
+
+The hub log of a Target that is down shows an SSH error: `connection refused` on port 45876. The hub tries SSH after it closes the WebSocket. This error is not the cause.
+
+The real reason is in the log of the bridge.
+
+### Image
+
+The file `internal/dockerfile_snmpbridge` builds the bridge in a scratch image with the CA certificates. It has no volume. Build it from the root of the repo:
+
+```sh
+docker build -f internal/dockerfile_snmpbridge -t snmpbridge .
+```
+
+A docker host can use the git URL and the tag as the build context.
+
+Run `scripts/check-snmpbridge-image.sh` to check the image. The script builds the image and runs it with no `SNMPBRIDGE_CONFIG`. It passes when the bridge stops with a non-zero exit code and names `SNMPBRIDGE_CONFIG`.
+
+## Status of this version
+
+This version loads and checks the config. It has the SNMP reader, the table rules of a Profile and the read timing. The reader is not yet in the running bridge, so the running bridge still reports the fixed data of a stub.
