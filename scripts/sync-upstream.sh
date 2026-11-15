@@ -190,6 +190,24 @@ else
 fi
 tested="$(git -C "$TMP" rev-parse HEAD)"
 
+# Step 7b: the Go pin of the fork image files must cover the Go version of go.mod.
+# why: a merge of an upstream release can raise `go` in go.mod. The image would then
+# fail to build, and `make test` does not see it.
+[ -f "$TMP/go.mod" ] || die "go.mod is missing in the merged copy"
+gomod_ver="$(awk '$1 == "go" {print $2; exit}' "$TMP/go.mod")"
+[ -n "$gomod_ver" ] || die "go.mod of the merged copy has no go line"
+gomod_mm="$(echo "$gomod_ver" | awk -F. '{print $1 "." $2}')"
+for f in internal/dockerfile_hub_ui internal/dockerfile_snmpbridge; do
+  pins="$(sed -n 's/^FROM .*golang:\([0-9][0-9]*\.[0-9][0-9]*\)[-.a-z0-9]*.*/\1/p' "$TMP/$f" 2>/dev/null || true)"
+  [ -n "$pins" ] || die "$f has no golang image with a version tag"
+  for pin in $pins; do
+    if [ "$(printf '%s\n%s\n' "$gomod_mm" "$pin" | sort -V | tail -n 1)" != "$pin" ]; then
+      die "go.mod needs Go $gomod_ver, but the golang image in $f is $pin. Raise the Go pin in internal/dockerfile_hub_ui and internal/dockerfile_snmpbridge"
+    fi
+  done
+done
+say "step 7b: the Go pin of the image files covers go $gomod_ver"
+
 # Step 8: tests.
 mkdir -p "$TMP/internal/site/dist"
 touch "$TMP/internal/site/dist/index.html"

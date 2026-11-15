@@ -399,6 +399,8 @@ The hub and the bridge build from one tag of the fork. A docker host uses the sa
 | Hub with the UI | `internal/dockerfile_hub_ui` |
 | SNMP bridge | `internal/dockerfile_snmpbridge` |
 
+Both files pin their base images with a version tag: `golang:1.27-alpine` and `oven/bun:1.4-alpine`. Step 7b of `scripts/sync-upstream.sh` stops the sync when `go.mod` needs a newer Go minor version than the pin. Then raise the Go pin in both files.
+
 Run `scripts/check-hub-image.sh` to check the hub image. The script copies the files of the commit `HEAD` to a new folder, so the folder has no `dist` and no `node_modules`. It builds the image from that folder and starts a container.
 
 Set `TREE=working` to check the working tree before a commit.

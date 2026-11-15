@@ -52,6 +52,12 @@ setup() {
   else
     commit "$CLONE" own.txt own "own"
   fi
+  # The fork image files, with a Go pin that covers go 1.27.3.
+  mkdir -p "$CLONE/internal"
+  printf 'FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder\nFROM scratch\n' >"$CLONE/internal/dockerfile_snmpbridge"
+  printf 'FROM --platform=$BUILDPLATFORM oven/bun:1.4-alpine AS ui\nFROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder\nFROM scratch\n' >"$CLONE/internal/dockerfile_hub_ui"
+  git -C "$CLONE" add internal
+  git -C "$CLONE" commit -q -m "image files"
   git -C "$CLONE" push -q origin bridge
   # Upstream moves on: v0.10.0 (annotated), then an rc tag on a later commit.
   if [ "${1:-}" = conflict ]; then
@@ -59,6 +65,10 @@ setup() {
   else
     commit "$UP" b.txt b "c2"
   fi
+  # SETUP_GO: the go line that the release v0.10.0 holds in go.mod.
+  printf 'module example.com/m\n\ngo %s\n' "${SETUP_GO:-1.27.3}" >"$UP/go.mod"
+  git -C "$UP" add go.mod
+  git -C "$UP" commit -q -m "go.mod"
   git -C "$UP" tag -a -m v0.10.0 v0.10.0
   commit "$UP" c.txt c "c3"
   git -C "$UP" tag v9.9.9-rc1
@@ -134,6 +144,15 @@ run
 check "exit 1" "$([ "$CODE" -eq 1 ] && echo 0 || echo 1)"
 check "names the ancestor problem" "$(grep -q 'not an ancestor' <<<"$OUT" && echo 0 || echo 1)"
 check "nothing changed" "$([ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
+
+echo "== go.mod needs a newer Go than the image pin =="
+SETUP_GO=1.28.0 setup
+s1="$(snap)"
+run
+check "exit 1" "$([ "$CODE" -eq 1 ] && echo 0 || echo 1)"
+check "names the 2 files and the Go version" "$(grep -q 'dockerfile_hub_ui' <<<"$OUT" && grep -q 'dockerfile_snmpbridge' <<<"$OUT" && grep -q 'Go 1.28.0' <<<"$OUT" && echo 0 || echo 1)"
+check "stops before the tests" "$(grep -q 'step 8' <<<"$OUT" && echo 1 || echo 0)"
+check "nothing changed, no tag" "$([ "$s1" = "$(snap)" ] && echo 0 || echo 1)"
 
 echo "== merge conflict =="
 setup conflict
