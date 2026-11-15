@@ -5,7 +5,7 @@ The terms of the work that this fork adds to Beszel. The terms of Beszel itself 
 ## Language
 
 **SNMP bridge**:
-A program that reads devices through SNMP and reports each one to the hub as a system.
+A program that reads devices through SNMP, or through an HTTP JSON API when a device has no SNMP agent, and reports each one to the hub as a system.
 _Avoid_: SNMP agent (in SNMP, the agent is the service on the device), poller, proxy
 
 **Target**:
