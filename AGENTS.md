@@ -1,5 +1,7 @@
 # Conventions for this repo
 
+Work folder: `.scratch`.
+
 A public fork of `henrygd/beszel`. It adds an SNMP bridge, and it offers small features to upstream.
 
 - The repo is public. Write no host name, IP address or secret of a private network in a file, a commit or a PR. Use example values, such as `192.0.2.10`.
