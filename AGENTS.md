@@ -12,7 +12,7 @@ A public fork of `henrygd/beszel`. It adds an SNMP bridge, and it offers small f
 - Write all prose in ASD-STE100 Simplified Technical English.
 - Commit and push with the `ship` skill.
 - Never commit a secret, not even encrypted.
-- Issues for this repo live in `.scratch/issues/`. Before you create, move or close an issue, read `~/code/dotfiles/docs/agents/issue-tracker.md`. `.scratch` is a symlink to the vault. `.git/info/exclude` ignores it, because `.gitignore` is an upstream file.
+- Issues for this repo live in `.scratch/issues/`. Before you create, move or close an issue, read `~/.claude/issue-tracker.md`. `.scratch` is a symlink to the vault. `.git/info/exclude` ignores it, because `.gitignore` is an upstream file.
 - Use no GitHub Actions, no Copilot and no GitHub issues, wiki, projects or discussions in the fork. Talk to upstream in the issues, discussions and PRs of `henrygd/beszel`.
 - Test level: Product. Each change to the logic gets a unit test with mocked input. Run the tests with `make test`. Before the first Go test in a new checkout, worktree or export, run `mkdir -p internal/site/dist && touch internal/site/dist/index.html`. Why: `internal/site/embed.go` needs the folder, `make test` does not make it, and without it the run fails at setup after about 5 minutes. No test needs a real SNMP device: use `.snmprec` files and an in-process hub. Main user paths:
   1. A Target shows in the hub as a system, with fans and temperatures.
