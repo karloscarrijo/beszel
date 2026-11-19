@@ -19,22 +19,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Table kinds of a table rule.
 const (
 	KindTemperature = "temperature"
 	KindFan         = "fan"
 )
 
-// SourceUCD is a valid value of `cpu` and the only valid value of `memory`.
 const SourceUCD = "ucd"
 
-// SourceHR is a valid value of `cpu`: the mean of hrProcessorLoad.
 const SourceHR = "hr"
 
-// ConfigEnv is the variable that holds the path of the config file.
 const ConfigEnv = "SNMPBRIDGE_CONFIG"
 
-// Default values of a Target.
 const (
 	DefaultPort    = 161
 	DefaultVersion = "2c"
@@ -49,10 +44,9 @@ type Config struct {
 // Profile is a named set of rules.
 type Profile struct {
 	Tables []TableRule
-	CPU    string // "", SourceUCD or SourceHR
-	Memory string // "" or SourceUCD
-	// HTTP is set for a Profile of a Target with a url, and nil otherwise.
-	HTTP *HTTPProfile
+	CPU    string
+	Memory string
+	HTTP   *HTTPProfile
 }
 
 // HTTPProfile names the JSON fields of an HTTP source. Each value is a dotted
@@ -61,8 +55,7 @@ type HTTPProfile struct {
 	CPU           string
 	MemoryPercent string
 	Uptime        string
-	// Fresh is nil when the Profile has no freshness check.
-	Fresh *HTTPFresh
+	Fresh         *HTTPFresh
 }
 
 // HTTPFresh is the freshness check of an HTTP Profile.
@@ -82,11 +75,11 @@ var errNoHTTPSource = errors.New("this build has no HTTP source")
 // TableRule tells the reader which table to read. The table reads are in
 // beszel#007.
 type TableRule struct {
-	OID         string // table entry OID, dotted, with a leading dot
+	OID         string
 	NameColumn  int
 	ValueColumn int
-	Kind        string  // KindTemperature or KindFan
-	Scale       float64 // divides the value, > 0
+	Kind        string
+	Scale       float64
 	Match       *regexp.Regexp
 	Exclude     *regexp.Regexp
 }
@@ -98,17 +91,16 @@ type TargetConfig struct {
 	Port    int
 	Version string
 	Profile string
-	// Community is the SNMP community. It never goes to a log or an error.
+	// why: a community is a secret, so it never goes to a log or an error.
 	Community string
-	// URL can hold a query, so print it only through SafeURL.
-	URL string
-	// HeaderValue never goes to a log or an error.
-	Header      string
-	HeaderValue string
-	// CAPool replaces the system pool when ca_file is set, and is nil otherwise.
+	// why: a URL can hold a query, so print it only through SafeURL.
+	URL    string
+	Header string
+	// why: a header value is a secret, so it never goes to a log or an error.
+	HeaderValue   string
 	CAPool        *x509.CertPool
 	TLSServerName string
-	// MemoryTotalMiB is 0 when the Target gives no memory bytes.
+	// why: 0 means the Target gives no memory bytes.
 	MemoryTotalMiB uint64
 }
 

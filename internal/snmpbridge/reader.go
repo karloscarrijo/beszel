@@ -9,25 +9,21 @@ import (
 // ValueType is the SNMP type of a Value.
 type ValueType int
 
-// The types that the reader gives.
 const (
-	TypeNoSuch ValueType = iota // the OID does not exist on the Target
+	TypeNoSuch ValueType = iota
 	TypeInteger
 	TypeOctetString
 	TypeGauge
 	TypeCounter
 	TypeTimeTicks
-	TypeOther // a type that the bridge does not use
+	TypeOther
 )
 
 // Value is one raw value from a Target.
 type Value struct {
-	OID  string // dotted, with a leading dot
-	Type ValueType
-	// Int holds the number of TypeInteger, TypeGauge, TypeCounter and
-	// TypeTimeTicks.
-	Int int64
-	// Bytes holds the content of TypeOctetString.
+	OID   string
+	Type  ValueType
+	Int   int64
 	Bytes []byte
 }
 
@@ -48,10 +44,10 @@ type Reader interface {
 // OID, and never holds the community, the packet or the target string of
 // gosnmp.
 type ReadError struct {
-	Target string // the Target id
-	Op     string // "get" or "walk"
+	Target string
+	Op     string
 	OID    string
-	// Cause is only set when the context ended. It is the context error.
+	// why: Cause is set only when the context ended.
 	Cause error
 }
 

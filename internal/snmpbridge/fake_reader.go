@@ -12,10 +12,8 @@ import (
 // FakeReader is a Reader that answers from .snmprec text. Tests use it, so no
 // test needs a real device.
 type FakeReader struct {
-	values []Value // sorted by OID
-	// Err, when set, makes each call fail with a ReadError.
-	Err bool
-	// TargetID names the Target in a ReadError.
+	values   []Value
+	Err      bool
 	TargetID string
 }
 

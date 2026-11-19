@@ -13,10 +13,8 @@ import (
 
 // Target is one device that the bridge reports to the hub.
 type Target struct {
-	// ID is the stable identity of the Target. The fingerprint comes from it,
-	// so a change of ID makes a new system in the hub.
-	ID string
-	// Name is the system name that the hub gives a new system.
+	// why: the fingerprint comes from ID, so a change of ID makes a new system in the hub.
+	ID   string
 	Name string
 }
 

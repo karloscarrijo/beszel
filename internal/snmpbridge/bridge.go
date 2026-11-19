@@ -20,26 +20,21 @@ const (
 
 // Backoff sets the wait between two connects of a Target.
 type Backoff struct {
-	Initial time.Duration // first wait; default DefaultBackoffInitial
-	Max     time.Duration // longest wait; default DefaultBackoffMax
+	Initial time.Duration
+	Max     time.Duration
 }
 
 // Bridge connects each Target to the hub, each with its own WebSocket, and
 // connects again after a failure.
 type Bridge struct {
 	HubURL  string
-	Token   string // one permanent universal token for all Targets
+	Token   string
 	Keys    []ssh.PublicKey
 	Targets []Target
-	// Source gives the data reader of a Target.
-	Source func(Target) Source
-	// Gate says whether a Target may connect now. A nil Gate permits all.
-	// A Target that the gate refuses does not connect: the loop asks again
-	// after one Initial wait.
+	Source  func(Target) Source
 	Gate    func(Target) bool
 	Backoff Backoff
-	// ProbeInterval is the time between 2 reads of a Target that failed a
-	// read. Default ProbeInterval (60 s).
+	// why: the default is ProbeInterval (60 s).
 	ProbeInterval time.Duration
 	Logger        *slog.Logger
 }

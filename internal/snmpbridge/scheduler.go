@@ -15,11 +15,9 @@ import (
 // The read timing of a Target (beszel#008). They are constants, with no
 // config key.
 const (
-	// MinReadGap is the shortest time between the starts of 2 reads.
 	MinReadGap = 10 * time.Second
-	// ReadDeadline is the time limit of one full read. The hub waits 30 s.
-	ReadDeadline = 20 * time.Second
-	// ProbeInterval is the time between 2 reads of a Target that failed.
+	// why: the hub waits 30 s for a reply.
+	ReadDeadline  = 20 * time.Second
 	ProbeInterval = 60 * time.Second
 )
 
@@ -34,21 +32,18 @@ type Scheduler struct {
 	Read     ReadFunc
 	MinGap   time.Duration
 	Deadline time.Duration
-	// Now is the clock. A test can set it.
-	Now func() time.Time
+	Now      func() time.Time
 
 	mu       sync.Mutex
 	inflight *flight
 	started  time.Time
 	haveLast bool
-	lastData *system.CombinedData // nil after a failed read
+	lastData *system.CombinedData
 	lastErr  error
 	failed   bool
-	// busy is true while a Read call runs, also after its deadline.
+	// why: busy stays true after the deadline until the Read call returns.
 	busy bool
-	// log writes one line when a read fails and one when it is good again.
-	// nil means no log.
-	log *onceLog
+	log  *onceLog
 }
 
 // SetLogger sets the logger of the Scheduler. Call it before the first read.

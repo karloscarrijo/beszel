@@ -52,7 +52,7 @@ func checkHTTPProfileKeys(name string, h rawHTTP) (*HTTPProfile, error) {
 	return p, nil
 }
 
-// maxMemoryMiB keeps MiB times 1048576 inside the range of a uint64 and of a float64 count of bytes.
+// why: MiB times 1048576 must stay inside the range of a uint64 and of a float64 count of bytes.
 const maxMemoryMiB = 1 << 40
 
 // wholeAbove0 gives v as a whole number above 0. A YAML number is an int, a

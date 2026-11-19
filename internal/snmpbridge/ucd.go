@@ -54,7 +54,7 @@ type Memory struct {
 	Percent   float64
 	Total     uint64
 	Used      uint64
-	BuffCache uint64 // memBuffer + memCached
+	BuffCache uint64
 }
 
 // MemoryUCD gives the memory use:

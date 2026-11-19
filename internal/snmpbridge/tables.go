@@ -32,19 +32,19 @@ type TableSource struct {
 	Logger  *slog.Logger
 
 	mu    sync.Mutex
-	rules map[int]*ruleState // key: the index of the rule in the Profile
-	dups  map[string]bool    // repeated names that already gave a warning
+	rules map[int]*ruleState
+	dups  map[string]bool
 }
 
 var _ ReadFunc = (*TableSource)(nil).Read
 
 // ruleState is what the bridge remembers of one table rule.
 type ruleState struct {
-	failed  bool            // the last read of the table failed
-	known   bool            // false until the first read
-	hasData bool            // the state of the last read: "has data" or "0 rows"
-	seen    map[string]bool // each name that gave data since the start
-	gone    map[string]bool // names that gave a warning and are not back
+	failed  bool
+	known   bool
+	hasData bool
+	seen    map[string]bool
+	gone    map[string]bool
 }
 
 // Read is a ReadFunc. It reads each rule of the Profile and gives ctx to each
@@ -279,8 +279,8 @@ type walkResult struct {
 
 // nameSet holds the names of one kind in one read, over all rules.
 type nameSet struct {
-	count map[string]int  // rows for each raw name
-	taken map[string]bool // each final name
+	count map[string]int
+	taken map[string]bool
 }
 
 func newNameSet() *nameSet {

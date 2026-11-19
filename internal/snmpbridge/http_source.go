@@ -53,8 +53,7 @@ type HTTPSource struct {
 	Target  TargetConfig
 	Profile HTTPProfile
 	Client  *http.Client
-	// Now is the bridge clock, and time.Now when nil.
-	Now func() time.Time
+	Now     func() time.Time
 }
 
 var _ ReadFunc = (*HTTPSource)(nil).Read

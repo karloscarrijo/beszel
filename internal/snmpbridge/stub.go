@@ -8,7 +8,6 @@ import (
 
 // StubSource is a Source with fixed data. The SNMP reader replaces it.
 type StubSource struct {
-	// Name is the hostname that the hub gets in the details of the system.
 	Name string
 }
 

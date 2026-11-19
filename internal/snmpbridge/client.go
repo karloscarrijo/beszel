@@ -44,16 +44,12 @@ type Client struct {
 	Keys   []ssh.PublicKey
 	Target Target
 	Source Source
-	// Fail, when set, returns a non-empty error text for each action that
-	// must get an error reply. The test tool uses it. It is not called for
-	// CheckFingerprint.
+	// why: Fail is not called for CheckFingerprint.
 	Fail   func(action common.WebSocketAction) string
 	Logger *slog.Logger
 
-	// once logs each kind of event one time, until the state of the Target
-	// changes. It lives as long as the Client, so it spans the calls of Run.
+	// why: once lives as long as the Client, so it spans the calls of Run.
 	once *onceLog
-	// sess is the session of the last Run call. It holds the served flag.
 	sess atomic.Pointer[session]
 }
 
@@ -180,11 +176,9 @@ type session struct {
 	log      *slog.Logger
 	verified atomic.Bool
 	badKey   atomic.Bool
-	// served is set before the reply to GetData is sent, so Run cannot
-	// return before it is set. It belongs to this session only.
+	// why: served is set before the reply to GetData is sent, so Run cannot return before it is set.
 	served atomic.Bool
-	// dataMu makes calls of Source.Data one at a time. A reader of a Target
-	// does not need to be safe for parallel calls.
+	// why: a reader of a Target does not need to be safe for parallel calls.
 	dataMu    sync.Mutex
 	writeMu   sync.Mutex
 	done      chan struct{}
