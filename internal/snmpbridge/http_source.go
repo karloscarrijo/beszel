@@ -145,6 +145,8 @@ func (s *HTTPSource) get(ctx context.Context) (any, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		// why: Go closes the connection when the body is not read to the end, so drain a little to allow reuse.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxHTTPReply+1))

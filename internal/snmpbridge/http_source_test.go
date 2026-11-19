@@ -149,6 +149,37 @@ func TestHTTPReadStatus(t *testing.T) {
 	}
 }
 
+// Guard: two reads that get a 401 with a body use one TCP connection.
+func TestHTTPFailedReadReusesConnection(t *testing.T) {
+	var conns, idles atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(401)
+		_, _ = w.Write([]byte(`{"error":`))
+		w.(http.Flusher).Flush()
+		time.Sleep(50 * time.Millisecond)
+		_, _ = w.Write([]byte(`"bad key"}`))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		switch s {
+		case http.StateNew:
+			conns.Add(1)
+		case http.StateIdle:
+			idles.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	src := httpSource(srv.URL, unifiProfile)
+	for i := range 2 {
+		_, err := src.Read(context.Background(), common.DataRequestOptions{})
+		require.ErrorContains(t, err, "status 401")
+		// The client puts the connection back in its pool a moment after Read returns.
+		require.Eventually(t, func() bool { return idles.Load() == int32(i+1) }, 2*time.Second, time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
+	}
+	assert.EqualValues(t, 1, conns.Load())
+}
+
 // Guard: the header goes in the request, and no redirect goes to a different host.
 func TestHTTPNoRedirectAndHeader(t *testing.T) {
 	var hits atomic.Int32
