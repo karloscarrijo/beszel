@@ -161,7 +161,7 @@ func (s *HTTPSource) get(ctx context.Context) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
 	var doc any
-	if err := dec.Decode(&doc); err != nil {
+	if err := dec.Decode(&doc); err != nil || dec.More() {
 		return nil, errors.New("reply is not JSON")
 	}
 	return doc, nil

@@ -88,7 +88,7 @@ func loadCAPool(file string) (*x509.CertPool, error) {
 func checkHTTPTargetKeys(rt rawTarget, p *HTTPProfile, t *TargetConfig) error {
 	// why: the error of url.Parse holds the full URL, with the query.
 	u, err := url.Parse(rt.URL)
-	if err != nil || u.Host == "" {
+	if err != nil || u.Hostname() == "" {
 		return errors.New("url is not valid: it needs a scheme and a host")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
@@ -127,6 +127,10 @@ func checkHTTPTargetKeys(rt rawTarget, p *HTTPProfile, t *TargetConfig) error {
 	}
 	if !headerNamePattern.MatchString(rt.Header) {
 		return fmt.Errorf("header %q is not a valid HTTP header name", rt.Header)
+	}
+	// why: Go's client takes the Host header from req.Host, so Header.Set would not send it.
+	if strings.EqualFold(rt.Header, "Host") {
+		return errors.New("header Host is not supported: the client sends the host of the url")
 	}
 	v, err := loadHeaderValue(rt)
 	if err != nil {

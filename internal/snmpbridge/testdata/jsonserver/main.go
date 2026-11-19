@@ -31,9 +31,14 @@ func main() {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		doc[freshKey] = time.Now().UTC().Format(time.RFC3339)
+		// why: net/http runs each request in its own goroutine, so the shared map must not be written.
+		reply := make(map[string]any, len(doc)+1)
+		for k, v := range doc {
+			reply[k] = v
+		}
+		reply[freshKey] = time.Now().UTC().Format(time.RFC3339)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(doc)
+		_ = json.NewEncoder(w).Encode(reply)
 	})
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

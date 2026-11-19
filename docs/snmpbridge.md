@@ -271,8 +271,9 @@ The following rules stop the bridge at the start. The error names the item.
 - A `url` Target names a Profile with no `http`, or a `host` Target names a Profile with `http`.
 - An `http` Profile has no path, or it has `tables`, `cpu` or `memory`.
 - A `url` Target has `port`, `version`, `community_env` or `community_file`.
-- The scheme of `url` is not `http` or `https`, or `url` has a user and a password. Use `header` for a credential.
-- `header` is not a valid HTTP header name.
+- The scheme of `url` is not `http` or `https`, or `url` has a user (with or without a password). Use `header` for a credential.
+- `header` is not a valid HTTP header name, or it is `Host`. The client sends the host of the `url`.
+- `url` has a port but no host name.
 - `header_value_env` or `header_value_file` is set with no `header`.
 - A Target with `header` does not have exactly one of `header_value_env` and `header_value_file`.
 - The header value is empty, or it has a line break or another control character. The bridge removes the spaces at the start and the end of the value, as for the community.
@@ -280,7 +281,7 @@ The following rules stop the bridge at the start. The error names the item.
 - `ca_file` or `tls_server_name` is set and the `url` is not `https`.
 - `fresh` has no `path`, or `max_age` is not a whole number of seconds above 0.
 - `memory_total_mib` is not a whole number above 0, or the Profile of the Target has no `memory_percent`.
-- A `host` Target has `ca_file`, `tls_server_name` or `memory_total_mib`.
+- A `host` Target has `header`, `header_value_env`, `header_value_file`, `ca_file`, `tls_server_name` or `memory_total_mib`.
 
 Plain `http` with a `header` is valid. The header value then goes over the network as clear text.
 

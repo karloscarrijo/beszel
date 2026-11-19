@@ -107,6 +107,8 @@ func TestHTTPReadValues(t *testing.T) {
 		{name: "array reply", body: `[1,2]`, wantErr: true},
 		{name: "not JSON", body: `<html>`, wantErr: true},
 		{name: "empty reply", body: ``, wantErr: true},
+		{name: "bytes after the JSON value", body: `{"cpu":5}<html>`, wantErr: true},
+		{name: "2 JSON values", body: `{"cpu":5}{"cpu":6}`, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
