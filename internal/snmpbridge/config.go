@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -48,7 +49,25 @@ type Profile struct {
 	Tables []TableRule
 	CPU    string // "", SourceUCD or SourceHR
 	Memory string // "" or SourceUCD
+	// HTTP is set for a Profile of a Target with a url, and nil otherwise.
+	HTTP *HTTPProfile
 }
+
+// HTTPProfile names the JSON fields of an HTTP source. Each value is a dotted
+// path of object keys, or "" for a field that the Profile does not read.
+type HTTPProfile struct {
+	CPU           string
+	MemoryPercent string
+	Uptime        string
+}
+
+// why: the http*.go files set these hooks in init(), and the bridge builds without them (docs/adr/0001).
+var (
+	checkHTTPProfile func(name string, h rawHTTP) (*HTTPProfile, error)
+	checkHTTPTarget  func(rt rawTarget, t *TargetConfig) error
+)
+
+var errNoHTTPSource = errors.New("this build has no HTTP source")
 
 // TableRule tells the reader which table to read. The table reads are in
 // beszel#007.
@@ -71,18 +90,43 @@ type TargetConfig struct {
 	Profile string
 	// Community is the SNMP community. It never goes to a log or an error.
 	Community string
+	// URL can hold a query, so print it only through SafeURL.
+	URL string
+	// HeaderValue never goes to a log or an error.
+	Header      string
+	HeaderValue string
 }
 
-// String hides the community, so a format verb cannot print it.
+// SafeURL gives the scheme, the host and the path of the URL, and never the
+// user, the query or the fragment. A URL that does not parse gives "".
+func (t TargetConfig) SafeURL() string {
+	u, err := url.Parse(t.URL)
+	if err != nil {
+		return ""
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+}
+
+// String hides the community, the header value and the query of the URL, so a
+// format verb cannot print them.
 func (t TargetConfig) String() string {
+	if t.URL != "" {
+		return fmt.Sprintf("{id=%s name=%s url=%s profile=%s}", t.ID, t.Name, t.SafeURL(), t.Profile)
+	}
 	return fmt.Sprintf("{id=%s name=%s host=%s port=%d version=%s profile=%s}", t.ID, t.Name, t.Host, t.Port, t.Version, t.Profile)
 }
 
-// GoString hides the community in %#v.
+// GoString hides the secrets in %#v.
 func (t TargetConfig) GoString() string { return t.String() }
 
-// LogValue hides the community in a slog line.
+// LogValue hides the secrets in a slog line.
 func (t TargetConfig) LogValue() slog.Value {
+	if t.URL != "" {
+		return slog.GroupValue(
+			slog.String("id", t.ID), slog.String("name", t.Name),
+			slog.String("url", t.SafeURL()), slog.String("profile", t.Profile),
+		)
+	}
 	return slog.GroupValue(
 		slog.String("id", t.ID), slog.String("name", t.Name),
 		slog.String("host", t.Host), slog.Int("port", t.Port),
@@ -100,6 +144,13 @@ type rawProfile struct {
 	Tables []rawTable `yaml:"tables"`
 	CPU    string     `yaml:"cpu"`
 	Memory string     `yaml:"memory"`
+	HTTP   *rawHTTP   `yaml:"http"`
+}
+
+type rawHTTP struct {
+	CPU           string `yaml:"cpu"`
+	MemoryPercent string `yaml:"memory_percent"`
+	Uptime        string `yaml:"uptime"`
 }
 
 type rawTable struct {
@@ -113,14 +164,18 @@ type rawTable struct {
 }
 
 type rawTarget struct {
-	ID            string `yaml:"id"`
-	Name          string `yaml:"name"`
-	Host          string `yaml:"host"`
-	Port          *int   `yaml:"port"`
-	Version       string `yaml:"version"`
-	Profile       string `yaml:"profile"`
-	CommunityEnv  string `yaml:"community_env"`
-	CommunityFile string `yaml:"community_file"`
+	ID              string `yaml:"id"`
+	Name            string `yaml:"name"`
+	Host            string `yaml:"host"`
+	Port            *int   `yaml:"port"`
+	Version         string `yaml:"version"`
+	Profile         string `yaml:"profile"`
+	CommunityEnv    string `yaml:"community_env"`
+	CommunityFile   string `yaml:"community_file"`
+	URL             string `yaml:"url"`
+	Header          string `yaml:"header"`
+	HeaderValueEnv  string `yaml:"header_value_env"`
+	HeaderValueFile string `yaml:"header_value_file"`
 }
 
 var (
@@ -194,6 +249,20 @@ func checkProfile(name string, rp rawProfile) (Profile, error) {
 	if name == "" {
 		return p, errors.New("a Profile has an empty name")
 	}
+	if rp.HTTP != nil {
+		switch {
+		case checkHTTPProfile == nil:
+			return p, fmt.Errorf("profile %q: %w", name, errNoHTTPSource)
+		case len(rp.Tables) > 0 || rp.CPU != "" || rp.Memory != "":
+			return p, fmt.Errorf("profile %q: http cannot go with tables, cpu or memory", name)
+		}
+		h, err := checkHTTPProfile(name, *rp.HTTP)
+		if err != nil {
+			return p, err
+		}
+		p.HTTP = h
+		return p, nil
+	}
 	if rp.CPU != "" && rp.CPU != SourceUCD && rp.CPU != SourceHR {
 		return p, fmt.Errorf("profile %q: cpu must be %q or %q, not %q", name, SourceUCD, SourceHR, rp.CPU)
 	}
@@ -260,6 +329,32 @@ func checkTable(rt rawTable) (TableRule, error) {
 	return r, nil
 }
 
+// checkHTTPTargetConfig checks a Target with a url.
+func checkHTTPTargetConfig(where string, rt rawTarget, profiles map[string]Profile) (TargetConfig, error) {
+	t := TargetConfig{}
+	if checkHTTPTarget == nil {
+		return t, fmt.Errorf("%s: %w", where, errNoHTTPSource)
+	}
+	if rt.Port != nil || rt.Version != "" || rt.CommunityEnv != "" || rt.CommunityFile != "" {
+		return t, fmt.Errorf("%s: port, version, community_env and community_file need host, not url", where)
+	}
+	if rt.Profile == "" {
+		return t, fmt.Errorf("%s: missing field profile", where)
+	}
+	p, ok := profiles[rt.Profile]
+	if !ok {
+		return t, fmt.Errorf("%s: profile %q does not exist", where, rt.Profile)
+	}
+	if p.HTTP == nil {
+		return t, fmt.Errorf("%s: profile %q has no http, so the Target needs host, not url", where, rt.Profile)
+	}
+	t.ID, t.Name, t.Profile = rt.ID, rt.Name, rt.Profile
+	if err := checkHTTPTarget(rt, &t); err != nil {
+		return t, fmt.Errorf("%s: %w", where, err)
+	}
+	return t, nil
+}
+
 func checkTarget(i int, rt rawTarget, profiles map[string]Profile) (TargetConfig, error) {
 	t := TargetConfig{Port: DefaultPort, Version: DefaultVersion}
 	where := fmt.Sprintf("target %d", i+1)
@@ -273,8 +368,16 @@ func checkTarget(i int, rt rawTarget, profiles map[string]Profile) (TargetConfig
 	if rt.Name == "" {
 		return t, fmt.Errorf("%s: missing field name", where)
 	}
-	if rt.Host == "" {
-		return t, fmt.Errorf("%s: missing field host", where)
+	switch {
+	case rt.Host != "" && rt.URL != "":
+		return t, fmt.Errorf("%s: set only one of host and url", where)
+	case rt.Host == "" && rt.URL == "":
+		return t, fmt.Errorf("%s: missing field host or url", where)
+	case rt.URL != "":
+		return checkHTTPTargetConfig(where, rt, profiles)
+	}
+	if rt.Header != "" || rt.HeaderValueEnv != "" || rt.HeaderValueFile != "" {
+		return t, fmt.Errorf("%s: header, header_value_env and header_value_file need url, not host", where)
 	}
 	if rt.Port != nil {
 		if *rt.Port < 1 || *rt.Port > 65535 {
@@ -293,6 +396,9 @@ func checkTarget(i int, rt rawTarget, profiles map[string]Profile) (TargetConfig
 	}
 	if _, ok := profiles[rt.Profile]; !ok {
 		return t, fmt.Errorf("%s: profile %q does not exist", where, rt.Profile)
+	}
+	if profiles[rt.Profile].HTTP != nil {
+		return t, fmt.Errorf("%s: profile %q has http, so the Target needs url, not host", where, rt.Profile)
 	}
 	community, err := loadCommunity(rt)
 	if err != nil {

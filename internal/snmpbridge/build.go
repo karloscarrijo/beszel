@@ -1,8 +1,15 @@
 package snmpbridge
 
 import (
+	"context"
 	"log/slog"
+
+	"github.com/henrygd/beszel/internal/common"
+	"github.com/henrygd/beszel/internal/entities/system"
 )
+
+// why: the http*.go files set newHTTPRead in init(), and the bridge builds without them.
+var newHTTPRead func(tc TargetConfig, p *HTTPProfile) ReadFunc
 
 // NewBridge joins the parts for the command: for each Target of the config,
 // the reader, the table rules and sources of its Profile, and the scheduler
@@ -23,13 +30,23 @@ func NewBridge(cfg *Config, settings *Settings, newReader func(TargetConfig) Rea
 		Targets: targets,
 		Source: func(t Target) Source {
 			tc := byID[t.ID]
-			ts := &TableSource{
-				Target:  t,
-				Profile: cfg.Profiles[tc.Profile],
-				Reader:  newReader(tc),
-				Logger:  logger,
+			var read ReadFunc
+			switch {
+			case tc.URL == "":
+				read = (&TableSource{
+					Target:  t,
+					Profile: cfg.Profiles[tc.Profile],
+					Reader:  newReader(tc),
+					Logger:  logger,
+				}).Read
+			case newHTTPRead != nil:
+				read = newHTTPRead(tc, cfg.Profiles[tc.Profile].HTTP)
+			default:
+				read = func(context.Context, common.DataRequestOptions) (*system.CombinedData, error) {
+					return nil, errNoHTTPSource
+				}
 			}
-			sched := NewScheduler(ts.Read)
+			sched := NewScheduler(read)
 			// why: like Bridge.Run, use the default logger when none is given.
 			l := logger
 			if l == nil {

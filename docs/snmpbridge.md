@@ -181,6 +181,7 @@ The following table lists the fields of a Profile and of a table rule.
 |---|---|---|
 | `cpu`, `memory` | Profile | Optional. Valid values of `cpu` are `ucd` and `hr`. The only valid value of `memory` is `ucd`. |
 | `tables` | Profile | A list of table rules. A Profile needs a table rule, `cpu` or `memory`. |
+| `http` | Profile | The JSON paths of an HTTP source. It cannot go with `tables`, `cpu` or `memory`. See "HTTP source". |
 | `oid` | Table rule | Required. The table entry object identifier (OID), dotted. |
 | `name_column`, `value_column` | Table rule | Required. Column numbers below the entry OID. |
 | `kind` | Table rule | Required. `temperature` or `fan`. |
@@ -193,10 +194,12 @@ The following table lists the fields of a Target.
 |---|---|
 | `id` | Required and unique. Only `a-z`, `0-9` and `-`. |
 | `name` | Required. |
-| `host` | Required. |
-| `port` | Default 161. |
-| `version` | Default `2c`. The only valid value is `2c`. |
-| `profile` | Required. It must name a Profile. |
+| `host` | Required for an SNMP Target. Set `host` or `url`, never both. |
+| `url` | Required for an HTTP Target. See "HTTP source". |
+| `header`, `header_value_env`, `header_value_file` | Optional, with `url` only. See "HTTP source". |
+| `port` | Default 161. Only with `host`. |
+| `version` | Default `2c`. The only valid value is `2c`. Only with `host`. |
+| `profile` | Required. It must name a Profile. A `host` Target needs a Profile with no `http`. A `url` Target needs a Profile with `http`. |
 
 ### Built-in sources
 
@@ -238,6 +241,61 @@ A Target with no `cpu` or no `memory` source shows 0 % for that value. This is n
 ### Changed id of a Target
 
 The Target `id` sets the fingerprint, so a changed `id` of a Target gives a new system. The old system shows as down. Delete the old system in the hub.
+
+### HTTP source
+
+A device with no SNMP agent can give its CPU, memory and uptime in one JSON reply. A Target with `url` reads that reply with one GET. The Profile of the Target has `http`. The code names no vendor, so the URL and the field names are in the config only.
+
+```yaml
+profiles:
+  http-device:
+    http:
+      cpu: cpuUtilizationPct
+      memory_percent: memoryUtilizationPct
+      uptime: uptimeSec
+targets:
+  - id: switch-1
+    name: Switch 1
+    profile: http-device
+    url: https://192.0.2.10/stats/latest
+    header: X-API-KEY
+    header_value_env: SWITCH_API_KEY
+```
+
+The `http` Profile needs one or more of `cpu`, `memory_percent` and `uptime`. Each value is a dotted path of object keys to a field of the reply, for example `uplink.rxRateBps`. A path has no array index, and a key that holds a dot cannot be named.
+
+The following rules stop the bridge at the start. The error names the item.
+
+- A Target has both `host` and `url`, or none of them.
+- A `url` Target names a Profile with no `http`, or a `host` Target names a Profile with `http`.
+- An `http` Profile has no path, or it has `tables`, `cpu` or `memory`.
+- A `url` Target has `port`, `version`, `community_env` or `community_file`.
+- The scheme of `url` is not `http` or `https`, or `url` has a user and a password. Use `header` for a credential.
+- `header` is not a valid HTTP header name.
+- `header_value_env` or `header_value_file` is set with no `header`.
+- A Target with `header` does not have exactly one of `header_value_env` and `header_value_file`.
+- The header value is empty, or it has a line break or another control character. The bridge removes the spaces at the start and the end of the value, as for the community.
+
+Plain `http` with a `header` is valid. The header value then goes over the network as clear text.
+
+**Read.** The read timing of this document applies with no change, so the deadline of 20 s is the only time limit. The bridge makes one GET for each Target for each read. It follows no redirect and uses no proxy from the environment, so the header value cannot go to a different host. A reply above 1 MiB fails the read. A status that is not 2xx fails the read, and the error text holds the status code.
+
+**Values.** A value is a JSON number, or a string with a decimal number after the spaces are removed, for example `"  2.6"`. These cases give no data point for that value, and never a false number such as 0 %:
+
+- The field is missing, or the path goes through a field that is not an object.
+- The value is `null`, a boolean, or text that is not a decimal number.
+- A percent is outside 0 to 100. Both ends are valid.
+- The uptime is negative, or it is above the range of the hub field.
+
+A value with no data point does not fail the read while another value is good. The hub field of the missing value then shows 0, as for an SNMP Target with no `cpu` or `memory` source.
+
+The uptime is in seconds. The bridge cuts a fraction to whole seconds. `memory_percent` fills only the memory percent. The byte fields stay 0, so the Memory chart of the hub stays empty. When no value of the Profile is left, the read fails and the system shows as down.
+
+**Log lines.** The bridge writes no new line for this source. The `read failed` line holds the Target and the error, for example `http get of target "switch-1" failed: status 401`. After a good read, the line `read is good again` follows, as for SNMP.
+
+**Secret rule.** The header value never goes to a log or an error text. A log line, an error text and each print form of a Target show only the scheme, the host and the path of the URL, never the query.
+
+**Build.** The HTTP source is in the files `internal/snmpbridge/http*.go`. Run `scripts/check-snmpbridge-nohttp.sh` to check that the bridge builds and passes its tests without them. A build with no such files stops at the start for a `url` Target or an `http` Profile.
 
 ## Profiles
 
