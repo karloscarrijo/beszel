@@ -435,11 +435,11 @@ A Target that gives no answer at all is a failed read. When only some rules answ
 
 ### Down status
 
-A Target that does not answer shows in the hub as down, and the hub saves no new stats for it. The bridge reads such a Target again each 60 s. After the first good read, the bridge connects the Target, and the system shows as up again.
+A Target that does not answer shows in the hub as down, and the hub saves no new stats for it. The bridge reads such a Target again each 30 s. After the first good read, the bridge connects the Target, and the system shows as up again. So a `Status` alert of 1 minute sends "down" only when no read is good for 1 minute.
 
 At the start, each Target connects one time with no read first. A Target with a wrong address thus shows as down at once.
 
-A connection can close for a different reason, for example a hub restart. The bridge then connects again with a backoff and with no read first.
+A connection can close for a different reason, for example a hub restart. The bridge then connects again with no read first. It waits 5 s before the first try, and then 10 s before each next try.
 
 The hub log of a Target that is down shows an SSH error: `connection refused` on port 45876. The hub tries SSH after it closes the WebSocket. This error is not the cause.
 

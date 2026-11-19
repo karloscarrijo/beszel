@@ -17,8 +17,9 @@ import (
 const (
 	MinReadGap = 10 * time.Second
 	// why: the hub waits 30 s for a reply.
-	ReadDeadline  = 20 * time.Second
-	ProbeInterval = 60 * time.Second
+	ReadDeadline = 20 * time.Second
+	// why: a Status alert of 1 minute must not end before the Target connects again (beszel#026).
+	ProbeInterval = 30 * time.Second
 )
 
 // ReadFunc reads the full data of one Target. It must stop when ctx ends.

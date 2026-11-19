@@ -11,11 +11,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// Default backoff values. A connect that fails waits 5 s, then 10 s, and so on
-// up to 5 minutes.
+// Default backoff values. The bridge waits 5 s before the first new try, then
+// 10 s before each next try, as the upstream agent does.
 const (
 	DefaultBackoffInitial = 5 * time.Second
-	DefaultBackoffMax     = 5 * time.Minute
+	DefaultBackoffMax     = 10 * time.Second
 )
 
 // Backoff sets the wait between two connects of a Target.
@@ -34,7 +34,7 @@ type Bridge struct {
 	Source  func(Target) Source
 	Gate    func(Target) bool
 	Backoff Backoff
-	// why: the default is ProbeInterval (60 s).
+	// why: the default is ProbeInterval (30 s).
 	ProbeInterval time.Duration
 	Logger        *slog.Logger
 }

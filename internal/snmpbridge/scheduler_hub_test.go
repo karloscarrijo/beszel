@@ -5,6 +5,7 @@ package snmpbridge
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -144,9 +145,14 @@ func TestHubFailedTargetDoesNotReconnectUntilAGoodRead(t *testing.T) {
 	h := newTestHub(t)
 	var fail atomic.Bool
 	var reads atomic.Int64
+	var mu sync.Mutex
+	var readTimes []time.Time
 	stub := stubRead("Alpha")
 	tb, scheds := h.schedBridge(map[string]ReadFunc{alpha.ID: func(ctx context.Context, o common.DataRequestOptions) (*system.CombinedData, error) {
 		reads.Add(1)
+		mu.Lock()
+		readTimes = append(readTimes, time.Now())
+		mu.Unlock()
 		if fail.Load() {
 			return nil, errors.New("snmp get failed")
 		}
@@ -164,6 +170,11 @@ func TestHubFailedTargetDoesNotReconnectUntilAGoodRead(t *testing.T) {
 	before := reads.Load()
 	eventually(t, "5 failed reads", func() bool { return reads.Load() >= before+5 })
 	assert.Equal(t, int64(1), connects.Load(), "0 connects in 5 failed reads")
+	mu.Lock()
+	for i := 2; i < len(readTimes); i++ {
+		assert.GreaterOrEqual(t, readTimes[i].Sub(readTimes[i-1]), tb.ProbeInterval-5*time.Millisecond, "the wait before probe %d", i)
+	}
+	mu.Unlock()
 
 	fail.Store(false)
 	eventually(t, "Alpha up again", func() bool { return h.status("Alpha") == "up" && h.count("system_stats") >= 1 })

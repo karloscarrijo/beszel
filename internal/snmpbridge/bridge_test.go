@@ -345,6 +345,31 @@ func TestWrongKeyAndWrongURLLogOnceAndRetry(t *testing.T) {
 		}
 		assert.Equal(t, 0, h.count("systems"))
 	})
+	t.Run("wrong TOKEN", func(t *testing.T) {
+		h := newTestHub(t)
+		tb := h.bridge("unknown-token", alpha)
+		n := attempts(tb)
+		tb.start(t)
+		eventually(t, "at least 4 connect attempts", func() bool { return n.Load() >= 4 })
+		lines := tb.logs.problems(alpha.ID)
+		require.Len(t, lines, 1, "%v", lines)
+		assert.Contains(t, lines[0].Text, "the hub refused the token")
+	})
+	t.Run("handshake refused", func(t *testing.T) {
+		h := newTestHub(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+		tb := h.bridge(permToken, alpha)
+		tb.HubURL = srv.URL
+		n := attempts(tb)
+		tb.start(t)
+		eventually(t, "at least 4 connect attempts", func() bool { return n.Load() >= 4 })
+		lines := tb.logs.problems(alpha.ID)
+		require.Len(t, lines, 1, "%v", lines)
+		assert.Contains(t, lines[0].Text, "the hub refused the connection")
+	})
 	t.Run("wrong HUB_URL", func(t *testing.T) {
 		h := newTestHub(t)
 		tb := h.bridge(permToken, alpha, beta)
@@ -362,6 +387,34 @@ func TestWrongKeyAndWrongURLLogOnceAndRetry(t *testing.T) {
 			assert.Contains(t, lines[0].Msg, "cannot connect")
 		}
 	})
+}
+
+// Guard: a backoff with no cap makes a Target wait too long after a hub restart, so a Status alert fires (beszel#026).
+func TestBackoffStopsAtMax(t *testing.T) {
+	h := newTestHub(t)
+	tb := h.bridge(permToken, alpha)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	tb.HubURL = "http://" + ln.Addr().String()
+	require.NoError(t, ln.Close())
+	var mu sync.Mutex
+	var times []time.Time
+	tb.Gate = func(Target) bool {
+		mu.Lock()
+		times = append(times, time.Now())
+		mu.Unlock()
+		return true
+	}
+	tb.start(t)
+	eventually(t, "6 connect attempts", func() bool { mu.Lock(); defer mu.Unlock(); return len(times) >= 6 })
+	mu.Lock()
+	defer mu.Unlock()
+	assert.GreaterOrEqual(t, times[1].Sub(times[0]), tb.Backoff.Initial-5*time.Millisecond, "first wait")
+	for i := 4; i < len(times); i++ {
+		gap := times[i].Sub(times[i-1])
+		assert.GreaterOrEqual(t, gap, tb.Backoff.Max-5*time.Millisecond, "attempt %d", i)
+		assert.Less(t, gap, tb.Backoff.Max*3, "wait after attempt %d must stop at Backoff.Max", i)
+	}
 }
 
 // Guard: after a hub restart, a Target that stays off needs a restart of the
