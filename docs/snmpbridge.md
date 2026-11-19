@@ -491,4 +491,8 @@ The script passes when `GET /` gives the HTML of the app, and one asset that the
 
 This version loads and checks the config. The running bridge reads each Target with the SNMP reader, the rules of its Profile and the read timing. It reports the data of the Target, with CPU, memory and uptime.
 
+This version has `cpu: hr` (the UniFi U6+ has no `ssCpuIdle`) and the HTTP source (a Target with `url`, read with one GET and the JSON paths of its Profile).
+
 A browser test ran the bridge against snmpsim and the stock hub 0.21.2. Both Targets showed with fans and temperatures. When snmpsim stopped, both systems showed as down in 42 s, and they were up again 62 s after the start.
+
+A second browser test added the U6+ Target (`cpu: hr`) and an HTTP Target at a local JSON server. Both showed with CPU and memory, and the HTTP Target also showed the Memory chart and the uptime. When the JSON server stopped, the HTTP system showed as down in 39 s, with one `read failed` line in the log. It was up again 57 s after the start.

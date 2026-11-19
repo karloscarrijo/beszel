@@ -1,4 +1,4 @@
-# Config of the bridge in compose.yaml. The 2 Targets read the snmpsim container.
+# Config of the bridge in compose.yaml. The 3 SNMP Targets read the snmpsim container, and the HTTP Target reads the jsonserver container.
 profiles:
   nas-bmc:
     tables:
@@ -29,7 +29,30 @@ profiles:
         value_column: 3
         kind: fan
         exclude: '^fan2$'
+  u6-plus:
+    cpu: hr
+    memory: ucd
+  http-device:
+    http:
+      cpu: cpuUtilizationPct
+      memory_percent: memoryUtilizationPct
+      uptime: uptimeSec
+      fresh:
+        path: lastHeartbeatAt
+        max_age: 60
 targets:
+  - id: u6-plus
+    name: U6+
+    host: snmpsim
+    profile: u6-plus
+    community_env: U6_PLUS_COMMUNITY
+  - id: http-device
+    name: HTTP Device
+    url: http://jsonserver:8080/stats
+    profile: http-device
+    header: X-API-KEY
+    header_value_env: HTTP_DEVICE_KEY
+    memory_total_mib: 64
   - id: nas-bmc
     name: NAS BMC
     host: snmpsim

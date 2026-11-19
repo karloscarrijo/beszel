@@ -9,8 +9,17 @@
 #   TOKEN=<token> KEY='<public key>' docker compose up -d --build bridge
 #
 # snmpsim uses the name of each .snmprec file in this folder as the community:
-# `nas-bmc` and `cgw-fiber`. Stop the snmpsim container to test a Target that
-# does not answer: `docker compose stop snmpsim`.
+# `nas-bmc`, `cgw-fiber` and `u6-plus`. Stop the snmpsim container to test a
+# Target that does not answer: `docker compose stop snmpsim`.
+#
+# The U6+ Target (Profile `cpu: hr` and `memory: ucd`) reads u6-plus.snmprec.
+# The HTTP Target reads the `jsonserver` container. It uses plain http, the
+# header X-API-KEY with the value `example-key` (from HTTP_DEVICE_KEY), the
+# `fresh` check and `memory_total_mib: 64`. The server writes the current time
+# in `lastHeartbeatAt` at each reply, and gives 401 for a wrong header value.
+# `docker compose up -d --build bridge` builds the JSON server too. To test a
+# HTTP Target that does not answer: `docker compose stop jsonserver`, and
+# `docker compose start jsonserver` to bring it back.
 services:
   snmpsim:
     image: tandrup/snmpsim@sha256:5140279e9080b2053febf8676f6c338f3723b0d06be8b77cf7e4657876e5c17c
@@ -24,12 +33,23 @@ services:
     volumes:
       - hub-data:/beszel_data
 
+  jsonserver:
+    build:
+      context: ./jsonserver
+    environment:
+      REPLY_FILE: /data/http-device.json
+      HEADER: X-API-KEY
+      HEADER_VALUE: example-key
+    volumes:
+      - ./http-device.json:/data/http-device.json:ro
+
   bridge:
     build:
       context: ../../..
       dockerfile: internal/dockerfile_snmpbridge
     depends_on:
       - snmpsim
+      - jsonserver
       - hub
     environment:
       HUB_URL: http://hub:8090
@@ -39,6 +59,8 @@ services:
       SNMPBRIDGE_CONFIG: /config/bridge.yaml
       NAS_BMC_COMMUNITY: nas-bmc
       CGW_FIBER_COMMUNITY: cgw-fiber
+      U6_PLUS_COMMUNITY: u6-plus
+      HTTP_DEVICE_KEY: example-key
     volumes:
       - ./bridge.yaml:/config/bridge.yaml:ro
 
