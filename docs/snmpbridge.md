@@ -197,6 +197,7 @@ The following table lists the fields of a Target.
 | `host` | Required for an SNMP Target. Set `host` or `url`, never both. |
 | `url` | Required for an HTTP Target. See "HTTP source". |
 | `header`, `header_value_env`, `header_value_file` | Optional, with `url` only. See "HTTP source". |
+| `ca_file`, `tls_server_name`, `memory_total_mib` | Optional, with `url` only. See "HTTP source". |
 | `port` | Default 161. Only with `host`. |
 | `version` | Default `2c`. The only valid value is `2c`. Only with `host`. |
 | `profile` | Required. It must name a Profile. A `host` Target needs a Profile with no `http`. A `url` Target needs a Profile with `http`. |
@@ -275,6 +276,11 @@ The following rules stop the bridge at the start. The error names the item.
 - `header_value_env` or `header_value_file` is set with no `header`.
 - A Target with `header` does not have exactly one of `header_value_env` and `header_value_file`.
 - The header value is empty, or it has a line break or another control character. The bridge removes the spaces at the start and the end of the value, as for the community.
+- `ca_file` cannot be read, or it has no valid certificate.
+- `ca_file` or `tls_server_name` is set and the `url` is not `https`.
+- `fresh` has no `path`, or `max_age` is not a whole number of seconds above 0.
+- `memory_total_mib` is not a whole number above 0, or the Profile of the Target has no `memory_percent`.
+- A `host` Target has `ca_file`, `tls_server_name` or `memory_total_mib`.
 
 Plain `http` with a `header` is valid. The header value then goes over the network as clear text.
 
@@ -289,7 +295,18 @@ Plain `http` with a `header` is valid. The header value then goes over the netwo
 
 A value with no data point does not fail the read while another value is good. The hub field of the missing value then shows 0, as for an SNMP Target with no `cpu` or `memory` source.
 
-The uptime is in seconds. The bridge cuts a fraction to whole seconds. `memory_percent` fills only the memory percent. The byte fields stay 0, so the Memory chart of the hub stays empty. When no value of the Profile is left, the read fails and the system shows as down.
+The uptime is in seconds. The bridge cuts a fraction to whole seconds. `memory_percent` fills only the memory percent. With no `memory_total_mib`, the byte fields stay 0, so the Memory chart of the hub stays empty. When no value of the Profile is left, the read fails and the system shows as down.
+
+**TLS.** With neither `ca_file` nor `tls_server_name`, the bridge uses the normal certificate check. No key turns the check off. A failed check fails the read, and the log line has the Go error text, for example `x509: certificate signed by unknown authority`.
+
+- `ca_file` is a PEM file. The bridge reads it one time at the start. Its certificates replace the system pool for this Target. The bridge ignores a PEM block that is not a certificate.
+- `tls_server_name` is the name that the certificate check uses when the `url` holds an address. It is valid with or without `ca_file`.
+
+**Repair step for a changed certificate.** When the API host gets a new certificate, put the new CA certificate in `ca_file`, then restart the bridge. Until then, the read fails and the system shows as down.
+
+**Freshness.** The `fresh` key of the `http` Profile has `path` and `max_age`. `path` names a string field of the reply in the RFC 3339 format. Fractional seconds and any offset are valid. `max_age` is a whole number of seconds above 0. The check runs before the values and uses the clock of the bridge. The read fails when the time is more than `max_age` before or after that clock, or when the field is missing or is not a valid time. This is also true when the reply has all values. The error names the Target and the `fresh` path, and never holds the field value. A UniFi heartbeat comes approximately each 30 s.
+
+**Memory bytes.** `memory_total_mib` is a Target key, a whole number above 0. The bridge gives total = `memory_total_mib` × 1048576 bytes and used = round(total × percent / 100) bytes. Buffer plus cached stays 0. A read with no memory percent gives no memory bytes.
 
 **Log lines.** The bridge writes no new line for this source. The `read failed` line holds the Target and the error, for example `http get of target "switch-1" failed: status 401`. After a good read, the line `read is good again` follows, as for SNMP.
 

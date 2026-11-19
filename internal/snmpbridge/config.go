@@ -2,6 +2,7 @@ package snmpbridge
 
 import (
 	"bytes"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -59,12 +61,20 @@ type HTTPProfile struct {
 	CPU           string
 	MemoryPercent string
 	Uptime        string
+	// Fresh is nil when the Profile has no freshness check.
+	Fresh *HTTPFresh
+}
+
+// HTTPFresh is the freshness check of an HTTP Profile.
+type HTTPFresh struct {
+	Path   string
+	MaxAge time.Duration
 }
 
 // why: the http*.go files set these hooks in init(), and the bridge builds without them (docs/adr/0001).
 var (
 	checkHTTPProfile func(name string, h rawHTTP) (*HTTPProfile, error)
-	checkHTTPTarget  func(rt rawTarget, t *TargetConfig) error
+	checkHTTPTarget  func(rt rawTarget, p *HTTPProfile, t *TargetConfig) error
 )
 
 var errNoHTTPSource = errors.New("this build has no HTTP source")
@@ -95,6 +105,11 @@ type TargetConfig struct {
 	// HeaderValue never goes to a log or an error.
 	Header      string
 	HeaderValue string
+	// CAPool replaces the system pool when ca_file is set, and is nil otherwise.
+	CAPool        *x509.CertPool
+	TLSServerName string
+	// MemoryTotalMiB is 0 when the Target gives no memory bytes.
+	MemoryTotalMiB uint64
 }
 
 // SafeURL gives the scheme, the host and the path of the URL, and never the
@@ -148,9 +163,15 @@ type rawProfile struct {
 }
 
 type rawHTTP struct {
-	CPU           string `yaml:"cpu"`
-	MemoryPercent string `yaml:"memory_percent"`
-	Uptime        string `yaml:"uptime"`
+	CPU           string    `yaml:"cpu"`
+	MemoryPercent string    `yaml:"memory_percent"`
+	Uptime        string    `yaml:"uptime"`
+	Fresh         yaml.Node `yaml:"fresh"`
+}
+
+type rawFresh struct {
+	Path   string `yaml:"path"`
+	MaxAge any    `yaml:"max_age"`
 }
 
 type rawTable struct {
@@ -176,6 +197,9 @@ type rawTarget struct {
 	Header          string `yaml:"header"`
 	HeaderValueEnv  string `yaml:"header_value_env"`
 	HeaderValueFile string `yaml:"header_value_file"`
+	CAFile          string `yaml:"ca_file"`
+	TLSServerName   string `yaml:"tls_server_name"`
+	MemoryTotalMiB  any    `yaml:"memory_total_mib"`
 }
 
 var (
@@ -349,7 +373,7 @@ func checkHTTPTargetConfig(where string, rt rawTarget, profiles map[string]Profi
 		return t, fmt.Errorf("%s: profile %q has no http, so the Target needs host, not url", where, rt.Profile)
 	}
 	t.ID, t.Name, t.Profile = rt.ID, rt.Name, rt.Profile
-	if err := checkHTTPTarget(rt, &t); err != nil {
+	if err := checkHTTPTarget(rt, p.HTTP, &t); err != nil {
 		return t, fmt.Errorf("%s: %w", where, err)
 	}
 	return t, nil
@@ -378,6 +402,9 @@ func checkTarget(i int, rt rawTarget, profiles map[string]Profile) (TargetConfig
 	}
 	if rt.Header != "" || rt.HeaderValueEnv != "" || rt.HeaderValueFile != "" {
 		return t, fmt.Errorf("%s: header, header_value_env and header_value_file need url, not host", where)
+	}
+	if rt.CAFile != "" || rt.TLSServerName != "" || rt.MemoryTotalMiB != nil {
+		return t, fmt.Errorf("%s: ca_file, tls_server_name and memory_total_mib need url, not host", where)
 	}
 	if rt.Port != nil {
 		if *rt.Port < 1 || *rt.Port > 65535 {

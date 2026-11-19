@@ -1,12 +1,15 @@
 package snmpbridge
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 func init() {
@@ -30,12 +33,59 @@ func checkHTTPProfileKeys(name string, h rawHTTP) (*HTTPProfile, error) {
 			return nil, fmt.Errorf("profile %q: http %s %q is not a dotted path of keys", name, f.key, f.path)
 		}
 	}
-	return &HTTPProfile{CPU: h.CPU, MemoryPercent: h.MemoryPercent, Uptime: h.Uptime}, nil
+	p := &HTTPProfile{CPU: h.CPU, MemoryPercent: h.MemoryPercent, Uptime: h.Uptime}
+	// why: a key with no value (YAML null) must still be checked, so Fresh is a yaml.Node.
+	if h.Fresh.Kind != 0 {
+		var f rawFresh
+		if err := h.Fresh.Decode(&f); err != nil {
+			return nil, fmt.Errorf("profile %q: http fresh must have path and max_age", name)
+		}
+		if f.Path == "" || !jsonPathPattern.MatchString(f.Path) {
+			return nil, fmt.Errorf("profile %q: http fresh needs path, a dotted path of keys", name)
+		}
+		secs, ok := wholeAbove0(f.MaxAge)
+		if !ok || secs > math.MaxInt64/uint64(time.Second) {
+			return nil, fmt.Errorf("profile %q: http fresh max_age must be a whole number of seconds above 0", name)
+		}
+		p.Fresh = &HTTPFresh{Path: f.Path, MaxAge: time.Duration(secs) * time.Second}
+	}
+	return p, nil
 }
 
-// checkHTTPTargetKeys checks url, header and the header value, and sets them
-// in t. An error never holds the query of the URL or the header value.
-func checkHTTPTargetKeys(rt rawTarget, t *TargetConfig) error {
+// maxMemoryMiB keeps MiB times 1048576 inside the range of a uint64 and of a float64 count of bytes.
+const maxMemoryMiB = 1 << 40
+
+// wholeAbove0 gives v as a whole number above 0. A YAML number is an int, a
+// uint64 or a float64.
+func wholeAbove0(v any) (uint64, bool) {
+	switch n := v.(type) {
+	case int:
+		return uint64(n), n > 0
+	case uint64:
+		return n, n > 0
+	case float64:
+		return uint64(n), n >= 1 && n == math.Trunc(n) && n < 1<<63
+	}
+	return 0, false
+}
+
+// loadCAPool reads a PEM file. It ignores a block that is not a certificate.
+func loadCAPool(file string) (*x509.CertPool, error) {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("read ca_file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(b) {
+		return nil, fmt.Errorf("ca_file %s has no valid certificate", file)
+	}
+	return pool, nil
+}
+
+// checkHTTPTargetKeys checks url, header, the header value, ca_file,
+// tls_server_name and memory_total_mib, and sets them in t. An error never
+// holds the query of the URL or the header value.
+func checkHTTPTargetKeys(rt rawTarget, p *HTTPProfile, t *TargetConfig) error {
 	// why: the error of url.Parse holds the full URL, with the query.
 	u, err := url.Parse(rt.URL)
 	if err != nil || u.Host == "" {
@@ -48,6 +98,27 @@ func checkHTTPTargetKeys(rt rawTarget, t *TargetConfig) error {
 		return errors.New("url must have no user and no password: use header")
 	}
 	t.URL = rt.URL
+	if (rt.CAFile != "" || rt.TLSServerName != "") && u.Scheme != "https" {
+		return errors.New("ca_file and tls_server_name need an https url")
+	}
+	if rt.CAFile != "" {
+		pool, err := loadCAPool(rt.CAFile)
+		if err != nil {
+			return err
+		}
+		t.CAPool = pool
+	}
+	t.TLSServerName = rt.TLSServerName
+	if rt.MemoryTotalMiB != nil {
+		mib, ok := wholeAbove0(rt.MemoryTotalMiB)
+		if !ok || mib > maxMemoryMiB {
+			return fmt.Errorf("memory_total_mib must be a whole number of MiB from 1 to %d", uint64(maxMemoryMiB))
+		}
+		if p.MemoryPercent == "" {
+			return errors.New("memory_total_mib needs a Profile with memory_percent")
+		}
+		t.MemoryTotalMiB = mib
+	}
 	if rt.Header == "" {
 		if rt.HeaderValueEnv != "" || rt.HeaderValueFile != "" {
 			return errors.New("header_value_env and header_value_file need header")

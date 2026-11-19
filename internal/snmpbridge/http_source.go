@@ -3,6 +3,7 @@ package snmpbridge
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/henrygd/beszel"
 	"github.com/henrygd/beszel/internal/common"
@@ -24,15 +26,22 @@ const MaxHTTPReply = 1 << 20
 
 func init() {
 	newHTTPRead = func(tc TargetConfig, p *HTTPProfile) ReadFunc {
-		return (&HTTPSource{Target: tc, Profile: *p, Client: newHTTPClient()}).Read
+		return (&HTTPSource{Target: tc, Profile: *p, Client: newHTTPClientFor(tc)}).Read
 	}
 }
 
 // newHTTPClient makes a client that follows no redirect and uses no proxy,
 // so the header value cannot go to a different host.
-func newHTTPClient() *http.Client {
+func newHTTPClient() *http.Client { return newHTTPClientFor(TargetConfig{}) }
+
+// newHTTPClientFor is newHTTPClient with the CA pool and the server name of
+// the Target. With neither, the client uses the normal certificate check.
+func newHTTPClientFor(tc TargetConfig) *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.Proxy = nil
+	if tc.CAPool != nil || tc.TLSServerName != "" {
+		tr.TLSClientConfig = &tls.Config{RootCAs: tc.CAPool, ServerName: tc.TLSServerName, MinVersion: tls.VersionTLS12}
+	}
 	return &http.Client{
 		Transport:     tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -44,6 +53,8 @@ type HTTPSource struct {
 	Target  TargetConfig
 	Profile HTTPProfile
 	Client  *http.Client
+	// Now is the bridge clock, and time.Now when nil.
+	Now func() time.Time
 }
 
 var _ ReadFunc = (*HTTPSource)(nil).Read
@@ -56,6 +67,9 @@ func (s *HTTPSource) Read(ctx context.Context, opts common.DataRequestOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("http get of target %q failed: %w", s.Target.ID, err)
 	}
+	if err := s.checkFresh(doc); err != nil {
+		return nil, fmt.Errorf("http get of target %q failed: %w", s.Target.ID, err)
+	}
 	stats := system.Stats{}
 	info := system.Info{AgentVersion: beszel.Version}
 	gave := false
@@ -66,6 +80,11 @@ func (s *HTTPSource) Read(ctx context.Context, opts common.DataRequestOptions) (
 	if v, ok := percentAt(doc, s.Profile.MemoryPercent); ok {
 		stats.MemPct, gave = twoDecimals(v), true
 		info.MemPct = stats.MemPct
+		if s.Target.MemoryTotalMiB > 0 {
+			total := s.Target.MemoryTotalMiB << 20
+			used := uint64(math.Round(float64(total) * stats.MemPct / 100))
+			stats.MemBytes = [4]uint64{total, used, 0, 0}
+		}
 	}
 	if v, ok := numberAt(doc, s.Profile.Uptime); ok && v >= 0 && v < math.Ldexp(1, 64) {
 		info.Uptime, gave = uint64(math.Trunc(v)), true
@@ -78,6 +97,32 @@ func (s *HTTPSource) Read(ctx context.Context, opts common.DataRequestOptions) (
 		data.Details = &system.Details{Hostname: s.Target.Name}
 	}
 	return data, nil
+}
+
+// checkFresh fails when the time at the fresh path is missing, is not a valid
+// RFC 3339 time, or is more than max_age from the bridge clock. The error
+// never holds the value of the field.
+func (s *HTTPSource) checkFresh(doc any) error {
+	f := s.Profile.Fresh
+	if f == nil {
+		return nil
+	}
+	text, ok := valueAt(doc, f.Path).(string)
+	if !ok {
+		return fmt.Errorf("fresh path %q is missing or is not a string", f.Path)
+	}
+	at, err := time.Parse(time.RFC3339, text)
+	if err != nil {
+		return fmt.Errorf("fresh path %q is not an RFC 3339 time", f.Path)
+	}
+	now := time.Now
+	if s.Now != nil {
+		now = s.Now
+	}
+	if d := now().Sub(at); d > f.MaxAge || d < -f.MaxAge {
+		return fmt.Errorf("fresh path %q is more than %s from the bridge clock", f.Path, f.MaxAge)
+	}
+	return nil
 }
 
 // get makes the request and decodes the JSON reply.
@@ -124,23 +169,30 @@ func (s *HTTPSource) get(ctx context.Context) (any, error) {
 
 var decimalPattern = regexp.MustCompile(`^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)$`)
 
-// numberAt gives the number at a dotted path. ok is false for an empty path,
-// a missing field, a path through a value that is not an object, and a value
-// that is not a finite number or a string with a decimal number.
-func numberAt(doc any, path string) (float64, bool) {
+// valueAt gives the value at a dotted path, or nil for an empty path, a
+// missing field, and a path through a value that is not an object.
+func valueAt(doc any, path string) any {
 	if path == "" {
-		return 0, false
+		return nil
 	}
 	cur := doc
 	for key := range strings.SplitSeq(path, ".") {
 		obj, ok := cur.(map[string]any)
 		if !ok {
-			return 0, false
+			return nil
 		}
 		if cur, ok = obj[key]; !ok {
-			return 0, false
+			return nil
 		}
 	}
+	return cur
+}
+
+// numberAt gives the number at a dotted path. ok is false for an empty path,
+// a missing field, a path through a value that is not an object, and a value
+// that is not a finite number or a string with a decimal number.
+func numberAt(doc any, path string) (float64, bool) {
+	cur := valueAt(doc, path)
 	var text string
 	switch v := cur.(type) {
 	case json.Number:
