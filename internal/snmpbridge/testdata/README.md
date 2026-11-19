@@ -14,6 +14,7 @@ snmpsim uses the file name as the community. For example, the community `nas-bmc
 |---|---|---|---|---|
 | `nas-bmc.snmprec` | Supermicro X10DRL-i board, baseboard management controller (BMC) | BMC firmware 03.91 | Vendor sensor table `1.3.6.1.4.1.21317.1.3.1` | 2600 |
 | `cgw-fiber.snmprec` | UniFi Cloud Gateway Fiber (UCG-Fiber) | UniFi OS 5.1.35 | LM-SENSORS-MIB `1.3.6.1.4.1.2021.13.16`, UCD-SNMP-MIB central processing unit (CPU) `1.3.6.1.4.1.2021.11`, UCD-SNMP-MIB memory `1.3.6.1.4.1.2021.4` | 72 |
+| `u6-plus.snmprec` | UniFi U6+ access point | UniFi firmware 6.7.54.15663 | HOST-RESOURCES-MIB `hrProcessorLoad` `1.3.6.1.2.1.25.3.3.1.2`, UCD-SNMP-MIB memory `1.3.6.1.4.1.2021.4` | 24 |
 | `check.sh` | None | None | None | None |
 
 The files hold only the subtrees in the table. They hold no full walk and no `system` object identifiers (OIDs), such as `sysName` or `sysDescr`. The repo is public, and a full walk holds names, serial numbers and addresses.

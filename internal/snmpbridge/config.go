@@ -22,8 +22,11 @@ const (
 	KindFan         = "fan"
 )
 
-// SourceUCD is the only valid value of `cpu` and `memory` in a Profile.
+// SourceUCD is a valid value of `cpu` and the only valid value of `memory`.
 const SourceUCD = "ucd"
+
+// SourceHR is a valid value of `cpu`: the mean of hrProcessorLoad.
+const SourceHR = "hr"
 
 // ConfigEnv is the variable that holds the path of the config file.
 const ConfigEnv = "SNMPBRIDGE_CONFIG"
@@ -43,7 +46,7 @@ type Config struct {
 // Profile is a named set of rules.
 type Profile struct {
 	Tables []TableRule
-	CPU    string // "" or SourceUCD
+	CPU    string // "", SourceUCD or SourceHR
 	Memory string // "" or SourceUCD
 }
 
@@ -191,10 +194,11 @@ func checkProfile(name string, rp rawProfile) (Profile, error) {
 	if name == "" {
 		return p, errors.New("a Profile has an empty name")
 	}
-	for field, v := range map[string]string{"cpu": rp.CPU, "memory": rp.Memory} {
-		if v != "" && v != SourceUCD {
-			return p, fmt.Errorf("profile %q: %s must be %q, not %q", name, field, SourceUCD, v)
-		}
+	if rp.CPU != "" && rp.CPU != SourceUCD && rp.CPU != SourceHR {
+		return p, fmt.Errorf("profile %q: cpu must be %q or %q, not %q", name, SourceUCD, SourceHR, rp.CPU)
+	}
+	if rp.Memory != "" && rp.Memory != SourceUCD {
+		return p, fmt.Errorf("profile %q: memory must be %q, not %q", name, SourceUCD, rp.Memory)
 	}
 	if len(rp.Tables) == 0 && rp.CPU == "" && rp.Memory == "" {
 		return p, fmt.Errorf("profile %q has no rules", name)

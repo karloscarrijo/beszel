@@ -41,6 +41,21 @@ type discard struct{}
 
 func (*discard) Write(p []byte) (int, error) { return len(p), nil }
 
+// Guard: a Profile with `cpu: hr` and `memory: ucd` reads the recorded U6+.
+func TestReadHRWithRecordedU6Plus(t *testing.T) {
+	src := &TableSource{
+		Target:  Target{ID: "u6-1", Name: "U6+"},
+		Profile: Profile{CPU: SourceHR, Memory: SourceUCD},
+		Reader:  fake(t, mustRead(t, "testdata/u6-plus.snmprec")),
+		Logger:  slog.New(slog.NewTextHandler(&discard{}, nil)),
+	}
+	data, err := src.Read(context.Background(), common.DataRequestOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, data.Stats.Cpu)
+	assert.Equal(t, 46.22, data.Stats.MemPct)
+	assert.Equal(t, [4]uint64{230092 * 1024, 106340 * 1024, 43256 * 1024, 0}, data.Stats.MemBytes)
+}
+
 // Guard: the Memory chart of the hub reads the bytes from MemBytes, and the
 // info bar reads Info. A Target that fills only the percent shows an empty
 // chart.

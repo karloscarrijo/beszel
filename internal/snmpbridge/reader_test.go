@@ -192,6 +192,33 @@ func TestMemoryUCD(t *testing.T) {
 	}
 }
 
+// Guard: `cpu: hr` gives the mean of the numeric hrProcessorLoad rows, limited
+// to 0 to 100, and gives no data (not an error) with no numeric row.
+func TestCPUHR(t *testing.T) {
+	const base = "1.3.6.1.2.1.25.3.3.1.2."
+	tests := []struct {
+		name string
+		text string
+		want float64
+		ok   bool
+	}{
+		{"mean of rows", base + "1|2|10\n" + base + "2|2|20\n" + base + "3|2|30\n", 20, true},
+		{"row above 100", base + "1|2|10\n" + base + "2|2|20\n" + base + "3|2|150\n", 60, true},
+		{"mean limited to 100", base + "1|2|150\n" + base + "2|2|200\n", 100, true},
+		{"row that is not a number is skipped", base + "1|2|40\n" + base + "2|4|abc\n", 40, true},
+		{"no row", "1.3.6.1.2.1.1.5.0|4|x\n", 0, false},
+		{"no numeric row", base + "1|4|abc\n", 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok, err := CPUHR(context.Background(), fake(t, tc.text))
+			require.NoError(t, err)
+			assert.Equal(t, tc.ok, ok)
+			assert.InDelta(t, tc.want, got, 1e-9)
+		})
+	}
+}
+
 // The recorded data of the real Targets give a CPU and memory value in range.
 func TestUCDWithRecordedData(t *testing.T) {
 	text := mustRead(t, "testdata/cgw-fiber.snmprec")

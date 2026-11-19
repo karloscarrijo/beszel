@@ -10,6 +10,8 @@ const (
 	oidMemBuffer    = ".1.3.6.1.4.1.2021.4.14.0"
 	oidMemCached    = ".1.3.6.1.4.1.2021.4.15.0"
 	oidSysUpTime    = ".1.3.6.1.2.1.1.3.0"
+
+	oidHrProcessorLoad = ".1.3.6.1.2.1.25.3.3.1.2"
 )
 
 // CPUUCD gives the CPU use in percent: 100 - ssCpuIdle, limited to 0 to 100.
@@ -24,6 +26,26 @@ func CPUUCD(ctx context.Context, r Reader) (percent float64, ok bool, err error)
 		return 0, false, nil
 	}
 	return min(max(100-float64(idle), 0), 100), true, nil
+}
+
+// CPUHR gives the CPU use in percent: the mean of the numeric hrProcessorLoad
+// rows, limited to 0 to 100. ok is false when the Target gives no numeric row.
+func CPUHR(ctx context.Context, r Reader) (percent float64, ok bool, err error) {
+	rows, err := r.Walk(ctx, oidHrProcessorLoad)
+	if err != nil {
+		return 0, false, err
+	}
+	var sum, n int64
+	for i := range rows {
+		if v, isNum := numeric(rows, i); isNum {
+			sum += v
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, false, nil
+	}
+	return min(max(float64(sum)/float64(n), 0), 100), true, nil
 }
 
 // Memory is the memory use of a Target. The byte values are the UCD values

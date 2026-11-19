@@ -237,3 +237,22 @@ func TestCommunitySources(t *testing.T) {
 		assert.NotContains(t, buf.String(), secret)
 	})
 }
+
+// Guard: a Profile with `cpu: hr` loads, and a bad `cpu` value or `memory: hr`
+// stops the load with an error that names the Profile and the value.
+func TestLoadCPUHRSource(t *testing.T) {
+	t.Setenv("TEST_COMMUNITY", "s3cret-community")
+	cfg, err := loadFrom(t, strings.Replace(validConfig, "cpu: ucd", "cpu: hr", 1))
+	require.NoError(t, err)
+	assert.Equal(t, SourceHR, cfg.Profiles["switch"].CPU)
+
+	_, err = loadFrom(t, strings.Replace(validConfig, "cpu: ucd", "cpu: other", 1))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `profile "switch"`)
+	assert.Contains(t, err.Error(), `"other"`)
+
+	_, err = loadFrom(t, strings.Replace(validConfig, "memory: ucd", "memory: hr", 1))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `profile "switch"`)
+	assert.Contains(t, err.Error(), `"hr"`)
+}

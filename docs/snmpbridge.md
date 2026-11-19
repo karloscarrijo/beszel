@@ -179,7 +179,7 @@ The following table lists the fields of a Profile and of a table rule.
 
 | Field | Where | Rule |
 |---|---|---|
-| `cpu`, `memory` | Profile | Optional. The only valid value is `ucd`. |
+| `cpu`, `memory` | Profile | Optional. Valid values of `cpu` are `ucd` and `hr`. The only valid value of `memory` is `ucd`. |
 | `tables` | Profile | A list of table rules. A Profile needs a table rule, `cpu` or `memory`. |
 | `oid` | Table rule | Required. The table entry object identifier (OID), dotted. |
 | `name_column`, `value_column` | Table rule | Required. Column numbers below the entry OID. |
@@ -200,10 +200,15 @@ The following table lists the fields of a Target.
 
 ### Built-in sources
 
-The `ucd` source reads the objects of the University of California, Davis (UCD) SNMP Management Information Base (MIB). The following list gives the formulas.
+The `ucd` source reads the objects of the University of California, Davis (UCD) SNMP Management Information Base (MIB). The `hr` source reads `hrProcessorLoad` of the Host Resources MIB. The following list gives the formulas.
 
 - `cpu: ucd` gives 100 minus `ssCpuIdle`, limited to 0 to 100.
+- `cpu: hr` walks `hrProcessorLoad` (`.1.3.6.1.2.1.25.3.3.1.2`). It gives the mean of the raw values of the numeric rows, limited to 0 to 100. It skips a row that is not a number. For example, the rows 10, 20 and 150 give a mean of 60. Use `hr` for a device with no `ssCpuIdle`, such as the UniFi U6+.
 - `memory: ucd` gives (`memTotalReal` minus `memAvailReal` minus `memBuffer` minus `memCached`) divided by `memTotalReal`.
+
+On the UniFi U6+, `memory: ucd` reads approximately 46 %, while UniFi shows approximately 64 %. UniFi counts the buffers and the cache as used memory. The bridge subtracts `memBuffer` and `memCached`, as the Beszel agent does.
+
+The `cpu: hr` source gives no data when the Target has no numeric `hrProcessorLoad` row.
 
 The memory source gives no data in these cases:
 

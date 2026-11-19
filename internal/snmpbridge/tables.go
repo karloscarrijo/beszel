@@ -114,8 +114,12 @@ func (s *TableSource) Read(ctx context.Context, opts common.DataRequestOptions) 
 		}
 	}
 	// A Profile with no cpu or memory source sends 0 in these fields.
-	if s.Profile.CPU == SourceUCD {
-		pct, ok, err := CPUUCD(ctx, s.Reader)
+	if s.Profile.CPU == SourceUCD || s.Profile.CPU == SourceHR {
+		cpuSource := CPUUCD
+		if s.Profile.CPU == SourceHR {
+			cpuSource = CPUHR
+		}
+		pct, ok, err := cpuSource(ctx, s.Reader)
 		switch {
 		case err != nil:
 			note(err)
