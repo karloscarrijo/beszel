@@ -292,6 +292,8 @@ func TestParseConfigHTTPTLSFreshMemory(t *testing.T) {
 		{"memory_total_mib with no memory_percent", target("    memory_total_mib: 512\n"), []string{"memory_total_mib", "memory_percent", `"usw-flex-mini"`}},
 		{"ca_file on a host Target", [2]string{"    community_env: TEST_COMMUNITY\n", "    community_env: TEST_COMMUNITY\n    ca_file: " + good + "\n"}, []string{"ca_file", "need url"}},
 		{"tls_server_name on a host Target", [2]string{"    community_env: TEST_COMMUNITY\n", "    community_env: TEST_COMMUNITY\n    tls_server_name: a\n"}, []string{"tls_server_name", "need url"}},
+		{"memory_total_mib with no value", target("    memory_total_mib:\n"), []string{"memory_total_mib", "whole number"}},
+		{"memory_total_mib with no value on a host Target", [2]string{"    community_env: TEST_COMMUNITY\n", "    community_env: TEST_COMMUNITY\n    memory_total_mib:\n"}, []string{"memory_total_mib", "need url"}},
 		{"memory_total_mib on a host Target", [2]string{"    community_env: TEST_COMMUNITY\n", "    community_env: TEST_COMMUNITY\n    memory_total_mib: 5\n"}, []string{"memory_total_mib", "need url"}},
 	}
 	for _, tc := range tests {

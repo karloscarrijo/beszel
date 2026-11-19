@@ -109,8 +109,12 @@ func checkHTTPTargetKeys(rt rawTarget, p *HTTPProfile, t *TargetConfig) error {
 		t.CAPool = pool
 	}
 	t.TLSServerName = rt.TLSServerName
-	if rt.MemoryTotalMiB != nil {
-		mib, ok := wholeAbove0(rt.MemoryTotalMiB)
+	if rt.MemoryTotalMiB.Kind != 0 {
+		var raw any
+		mib, ok := uint64(0), false
+		if rt.MemoryTotalMiB.Decode(&raw) == nil {
+			mib, ok = wholeAbove0(raw)
+		}
 		if !ok || mib > maxMemoryMiB {
 			return fmt.Errorf("memory_total_mib must be a whole number of MiB from 1 to %d", uint64(maxMemoryMiB))
 		}

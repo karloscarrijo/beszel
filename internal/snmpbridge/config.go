@@ -199,7 +199,8 @@ type rawTarget struct {
 	HeaderValueFile string `yaml:"header_value_file"`
 	CAFile          string `yaml:"ca_file"`
 	TLSServerName   string `yaml:"tls_server_name"`
-	MemoryTotalMiB  any    `yaml:"memory_total_mib"`
+	// why: a key with no value (YAML null) must still be checked, so MemoryTotalMiB is a yaml.Node.
+	MemoryTotalMiB yaml.Node `yaml:"memory_total_mib"`
 }
 
 var (
@@ -403,7 +404,7 @@ func checkTarget(i int, rt rawTarget, profiles map[string]Profile) (TargetConfig
 	if rt.Header != "" || rt.HeaderValueEnv != "" || rt.HeaderValueFile != "" {
 		return t, fmt.Errorf("%s: header, header_value_env and header_value_file need url, not host", where)
 	}
-	if rt.CAFile != "" || rt.TLSServerName != "" || rt.MemoryTotalMiB != nil {
+	if rt.CAFile != "" || rt.TLSServerName != "" || rt.MemoryTotalMiB.Kind != 0 {
 		return t, fmt.Errorf("%s: ca_file, tls_server_name and memory_total_mib need url, not host", where)
 	}
 	if rt.Port != nil {
